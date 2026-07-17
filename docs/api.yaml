@@ -1,0 +1,266 @@
+openapi: "3.0.3"
+info:
+  title: NOC Dashboard API
+  version: "1.0.0"
+  description: API for Corporate Customer Network Monitoring Dashboard
+
+servers:
+  - url: http://localhost:4000/api
+    description: Development server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: JWT token + user info
+
+  /nodes:
+    get:
+      tags: [Nodes]
+      summary: List all nodes (with optional filters)
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: customerId
+          in: query
+          schema: { type: integer }
+        - name: status
+          in: query
+          schema: { type: string, enum: [up, down, warning, unknown] }
+        - name: deviceType
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Array of nodes
+
+    post:
+      tags: [Nodes]
+      summary: Create a new node
+      security:
+        - BearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, ipAddress, customerId]
+              properties:
+                name: { type: string }
+                ipAddress: { type: string }
+                deviceType: { type: string, default: router }
+                customerId: { type: integer }
+                monitoringInterval: { type: integer, default: 30 }
+                x: { type: number }
+                y: { type: number }
+      responses:
+        "201":
+          description: Created node
+
+  /nodes/{id}:
+    get:
+      tags: [Nodes]
+      summary: Get node details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Node details with alarms and events
+
+    put:
+      tags: [Nodes]
+      summary: Update node
+      responses:
+        "200":
+          description: Updated node
+
+    delete:
+      tags: [Nodes]
+      summary: Delete node
+      responses:
+        "200":
+          description: Confirmation
+
+  /nodes/import:
+    post:
+      tags: [Nodes]
+      summary: Bulk import nodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      ipAddress: { type: string }
+                      deviceType: { type: string }
+      responses:
+        "201":
+          description: Import count
+
+  /events/summary:
+    get:
+      tags: [Events]
+      summary: Dashboard summary (counts + recent events)
+      responses:
+        "200":
+          description: Summary object
+
+  /events/history/{nodeId}:
+    get:
+      tags: [Events]
+      summary: Node history with stats
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: days
+          in: query
+          schema: { type: integer, default: 7 }
+      responses:
+        "200":
+          description: History with alarms, events, stats
+
+  /alarms:
+    get:
+      tags: [Alarms]
+      summary: List alarms (paginated, filterable)
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, resolved] }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: startDate
+          in: query
+          schema: { type: string, format: date }
+        - name: endDate
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Paginated alarms
+
+  /alarms/{id}/resolve:
+    put:
+      tags: [Alarms]
+      summary: Resolve an alarm
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recoveryNote: { type: string }
+                cause: { type: string }
+      responses:
+        "200":
+          description: Resolved alarm
+
+  /customers:
+    get:
+      tags: [Customers]
+      summary: List customers
+      responses:
+        "200":
+          description: Array of customers
+
+    post:
+      tags: [Customers]
+      summary: Create customer
+      responses:
+        "201":
+          description: Created customer
+
+  /export/alarms/xlsx:
+    get:
+      tags: [Export]
+      summary: Export alarms to XLSX
+      responses:
+        "200":
+          description: XLSX file
+
+  /export/alarms/csv:
+    get:
+      tags: [Export]
+      summary: Export alarms to CSV
+      responses:
+        "200":
+          description: CSV file
+
+  /export/alarms/pdf:
+    get:
+      tags: [Export]
+      summary: Export alarms to PDF
+      responses:
+        "200":
+          description: PDF file
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Get user notification settings
+      responses:
+        "200":
+          description: Notification settings
+
+    put:
+      tags: [Notifications]
+      summary: Update notification settings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                soundEnabled: { type: boolean }
+                emailEnabled: { type: boolean }
+                emailAddress: { type: string }
+                webhookEnabled: { type: boolean }
+                webhookUrl: { type: string }
+                slackEnabled: { type: boolean }
+                slackWebhook: { type: string }
+      responses:
+        "200":
+          description: Updated settings
