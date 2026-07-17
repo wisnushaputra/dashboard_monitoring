@@ -30,6 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (username: string, password: string) => {
     const res = await api.auth.login(username, password)
+    if (!res.token) throw new Error(res.error || 'Invalid credentials')
     setToken(res.token)
     setUser(res.user)
   }

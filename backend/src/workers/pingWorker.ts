@@ -9,42 +9,69 @@ const CHECK_INTERVAL_MS = 5000
 
 interface NodeState {
   consecutiveFailures: number
+  consecutiveWarnings: number
   lastStatus: string | null
   alarmId: number | null
 }
 
 const nodeStates = new Map<number, NodeState>()
 
-async function checkNode(node: { id: number; ipAddress: string; monitoringInterval: number; status: string; name: string; deviceType: string; customerId: number }) {
-  const state = nodeStates.get(node.id) || { consecutiveFailures: 0, lastStatus: null, alarmId: null }
+async function checkNode(node: { id: number; ipAddress: string; monitoringInterval: number; status: string; name: string; deviceType: string; customerId: number; isMaintenance: boolean; monitorConfig: any }) {
+  const state = nodeStates.get(node.id) || { consecutiveFailures: 0, consecutiveWarnings: 0, lastStatus: null, alarmId: null }
 
   if (node.monitoringInterval < CHECK_INTERVAL_MS / 1000) {
     return
   }
 
-  const result = await pingFast(node.ipAddress)
+  // Use a 3-packet ping to measure packet loss and latency on every check interval
+  const result = await ping(node.ipAddress, 3)
+
+  // Check if node is under manual or scheduled maintenance window
+  const now = new Date()
+  const activeWindow = await prisma.maintenanceWindow.findFirst({
+    where: {
+      nodeId: node.id,
+      startTime: { lte: now },
+      endTime: { gte: now },
+    }
+  })
+  const isUnderMaintenance = node.isMaintenance || !!activeWindow
+
+  // Load custom warnings thresholds
+  const config = (node.monitorConfig as any) || {}
+  const latencyThreshold = config.latencyWarningMs || 150
+  const packetLossThreshold = config.packetLossWarningPercent || 10
 
   let newStatus: string
-  if (!result.alive) {
-    state.consecutiveFailures++
-    newStatus = state.consecutiveFailures >= FAIL_THRESHOLD ? 'down' : 'warning'
-  } else if (result.latencyMs && result.latencyMs > WARN_THRESHOLD_MS) {
+  if (isUnderMaintenance) {
+    newStatus = 'maintenance'
     state.consecutiveFailures = 0
-    newStatus = 'warning'
+    state.consecutiveWarnings = 0
+  } else if (!result.alive) {
+    state.consecutiveFailures++
+    state.consecutiveWarnings = 0
+    newStatus = state.consecutiveFailures >= FAIL_THRESHOLD ? 'down' : 'warning'
   } else {
     state.consecutiveFailures = 0
-    newStatus = 'up'
+    const hasLatencyWarning = result.latencyMs !== null && result.latencyMs > latencyThreshold
+    const hasPacketLossWarning = result.packetLoss > 0 && result.packetLoss >= packetLossThreshold
+
+    if (hasLatencyWarning || hasPacketLossWarning) {
+      state.consecutiveWarnings++
+      newStatus = state.consecutiveWarnings >= 3 ? 'warning' : 'up'
+    } else {
+      state.consecutiveWarnings = 0
+      newStatus = 'up'
+    }
   }
 
   const changed = newStatus !== state.lastStatus
 
-  // For status changes, run a detailed multi-ping for richer data
-  let detail = result
-  if (changed) {
-    detail = await ping(node.ipAddress, 4)
-  }
+  // Since we already do a 3-packet check on every cycle, we don't need a redundant detailed ping on status change.
+  const detail = result
 
   if (changed) {
+    const prevStatus = state.lastStatus
     state.lastStatus = newStatus
 
     await prisma.node.update({
@@ -59,9 +86,11 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
       },
     })
 
-    const msg = newStatus === 'up'
-      ? `Recovered (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
-      : `${newStatus} (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
+    const msg = isUnderMaintenance
+      ? `Entered maintenance mode (scheduled or manual)`
+      : newStatus === 'up'
+        ? `Recovered (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
+        : `${newStatus} (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
 
     await prisma.eventLog.create({
       data: {
@@ -84,13 +113,32 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
       sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'down', deviceType: node.deviceType }).catch(() => {})
     }
 
-    if (newStatus === 'up' && state.alarmId) {
+    if (newStatus === 'warning') {
+      sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'warning', deviceType: node.deviceType }).catch(() => {})
+    }
+
+    if ((newStatus === 'up' || newStatus === 'maintenance') && state.alarmId) {
+      const alarmRecord = await prisma.alarm.findUnique({ where: { id: state.alarmId } })
+      const endTime = new Date()
+      let duration: number | undefined
+      if (alarmRecord) {
+        duration = Math.floor((endTime.getTime() - alarmRecord.startTime.getTime()) / 1000)
+      }
+
       const alarm = await prisma.alarm.update({
         where: { id: state.alarmId },
-        data: { status: 'resolved', endTime: new Date() },
+        data: {
+          status: 'resolved',
+          endTime,
+          duration,
+          recoveryNote: newStatus === 'maintenance' ? 'Entered maintenance mode' : undefined,
+        },
       })
       eventEmitter.emit('alarm:resolved', alarm)
       state.alarmId = null
+    }
+
+    if (newStatus === 'up' && (prevStatus === 'down' || prevStatus === 'warning')) {
       sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'up', deviceType: node.deviceType }).catch(() => {})
     }
 
@@ -124,7 +172,7 @@ export async function startPingWorker() {
     try {
       const nodes = await prisma.node.findMany({
         where: { enabled: true },
-        select: { id: true, ipAddress: true, monitoringInterval: true, status: true, name: true, deviceType: true, customerId: true },
+        select: { id: true, ipAddress: true, monitoringInterval: true, status: true, name: true, deviceType: true, customerId: true, isMaintenance: true, monitorConfig: true },
       })
 
       for (const node of nodes) {

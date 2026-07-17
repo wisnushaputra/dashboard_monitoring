@@ -46,6 +46,9 @@ router.get('/alarms/xlsx', async (req: Request, res: Response) => {
   ]
 
   alarms.forEach((a) => {
+    const duration = a.duration || (a.endTime
+      ? Math.floor((new Date(a.endTime).getTime() - new Date(a.startTime).getTime()) / 1000)
+      : 0)
     ws.addRow({
       customer: a.node.customer?.name || '-',
       node: a.node.name,
@@ -54,7 +57,7 @@ router.get('/alarms/xlsx', async (req: Request, res: Response) => {
       status: a.status,
       startTime: formatDate(a.startTime),
       endTime: formatDate(a.endTime),
-      duration: a.duration || 0,
+      duration,
       cause: a.cause || '-',
       recoveryNote: a.recoveryNote || '-',
     })
@@ -134,10 +137,13 @@ router.get('/alarms/pdf', async (req: Request, res: Response) => {
       doc.addPage()
       y = 30
     }
+    const duration = a.duration || (a.endTime
+      ? Math.floor((new Date(a.endTime).getTime() - new Date(a.startTime).getTime()) / 1000)
+      : 0)
     const vals = [
       a.node.customer?.name || '-', a.node.name, a.node.ipAddress,
       a.node.deviceType, a.status, formatDate(a.startTime),
-      formatDate(a.endTime), String(a.duration || 0),
+      formatDate(a.endTime), String(duration),
     ]
     vals.forEach((v, i) => {
       doc.text(v, 30 + colWidths.slice(0, i).reduce((a, b) => a + b, 0), y, { width: colWidths[i] })

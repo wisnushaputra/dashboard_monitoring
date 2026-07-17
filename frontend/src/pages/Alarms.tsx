@@ -16,6 +16,8 @@ export default function Alarms() {
   const [filter, setFilter] = useState({ status: '', deviceType: '', customerId: '', startDate: '', endDate: '' })
   const [resolveNote, setResolveNote] = useState('')
   const [resolveId, setResolveId] = useState<number | null>(null)
+  const [editId, setEditId] = useState<number | null>(null)
+  const [editNoteText, setEditNoteText] = useState('')
   const limit = 25
 
   useEffect(() => { api.customers.list().then(setCustomers).catch(() => {}) }, [])
@@ -46,6 +48,14 @@ export default function Alarms() {
     await api.alarms.resolve(resolveId, { recoveryNote: resolveNote })
     setResolveId(null)
     setResolveNote('')
+    load()
+  }
+
+  const handleSaveNote = async () => {
+    if (editId === null) return
+    await api.alarms.updateNote(editId, { recoveryNote: editNoteText })
+    setEditId(null)
+    setEditNoteText('')
     load()
   }
 
@@ -129,10 +139,15 @@ export default function Alarms() {
                 <td className="px-4 py-2 text-zinc-400 max-w-[200px] truncate">{a.recoveryNote || '-'}</td>
                 {user?.role !== 'viewer' && (
                   <td className="px-4 py-2">
-                    {a.status === 'active' && (
+                    {a.status === 'active' ? (
                       <button onClick={() => setResolveId(a.id)}
                         className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
                         Resolve
+                      </button>
+                    ) : (
+                      <button onClick={() => { setEditId(a.id); setEditNoteText(a.recoveryNote || '') }}
+                        className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 font-semibold transition-colors">
+                        Edit Note
                       </button>
                     )}
                   </td>
@@ -154,13 +169,34 @@ export default function Alarms() {
       </div>
 
       {resolveId !== null && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setResolveId(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 animate-toast" onClick={() => setResolveId(null)}>
           <div className="bg-white dark:bg-zinc-800 rounded-xl border shadow-lg p-5 w-full max-w-sm m-4" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-semibold mb-4">Resolve Alarm</h2>
             <textarea className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700" rows={3} placeholder="Recovery note..." value={resolveNote} onChange={(e) => setResolveNote(e.target.value)} />
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setResolveId(null)} className="px-3 py-1.5 text-xs rounded-lg border">Cancel</button>
               <button onClick={handleResolve} className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600 text-white">Resolve</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editId !== null && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-toast" onClick={() => setEditId(null)}>
+          <div className="bg-white dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-xl p-5 w-full max-w-sm m-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b pb-2">
+              <h2 className="font-bold text-sm text-zinc-800 dark:text-zinc-100">Edit Outage/Recovery Note</h2>
+            </div>
+            <textarea 
+              className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700 text-zinc-800 dark:text-zinc-100" 
+              rows={3} 
+              placeholder="Enter details of the issue / resolution..." 
+              value={editNoteText} 
+              onChange={(e) => setEditNoteText(e.target.value)} 
+            />
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button onClick={() => setEditId(null)} className="px-3 py-1.5 text-xs rounded-lg border font-semibold">Cancel</button>
+              <button onClick={handleSaveNote} className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm transition-colors">Save Changes</button>
             </div>
           </div>
         </div>

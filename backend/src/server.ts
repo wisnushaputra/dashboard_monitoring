@@ -16,6 +16,7 @@ import eventRoutes from './routes/events'
 import customerRoutes from './routes/customers'
 import exportRoutes from './routes/exports'
 import notificationRoutes from './routes/notifications'
+import reportsRoutes from './routes/reports'
 
 const app = express()
 const server = http.createServer(app)
@@ -35,6 +36,7 @@ app.use('/api/events', eventRoutes)
 app.use('/api/customers', customerRoutes)
 app.use('/api/export', exportRoutes)
 app.use('/api/notifications', notificationRoutes)
+app.use('/api/reports', reportsRoutes)
 
 // Health check
 app.get('/api/health', (_req, res) => {

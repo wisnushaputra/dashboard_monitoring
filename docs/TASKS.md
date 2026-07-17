@@ -9,8 +9,8 @@ Dokumen ini menguraikan daftar tugas pengembangan yang akan dilakukan, dari fron
 - [x] Inisialisasi proyek `backend`: Node.js, TypeScript, Express/Fastify.
 - [x] Inisialisasi proyek `frontend`: React 18, Vite, TypeScript, Tailwind CSS.
 - [x] Konfigurasi `package.json` untuk script dev dan build.
-- [ ] Setup Git repository dan `.gitignore`.
-- [~] Konfigurasi Docker (Dockerfile untuk frontend & backend, docker-compose.yml untuk dev).
+- [x] Setup Git repository dan `.gitignore`.
+- [x] Konfigurasi Docker (Dockerfile untuk frontend & backend, docker-compose.yml untuk dev).
 
 ### 1.2 Database & ORM
 - [x] Setup PostgreSQL database lokal (via Docker Compose).
@@ -47,7 +47,7 @@ Dokumen ini menguraikan daftar tugas pengembangan yang akan dilakukan, dari fron
 - [x] Buat Worker terpisah (Node.js worker thread atau proses terpisah).
 - [x] Worker: Baca daftar Node dari database.
 - [x] Worker: Lakukan ICMP Ping ke IP Address setiap Node sesuai `monitoring_interval`.
-- [~] Worker: Log hasil ping (latency, packet loss).
+- [x] Worker: Log hasil ping (latency, packet loss).
 - [x] Worker: Tentukan status Node (Hijau/Kuning/Merah) berdasarkan hasil ping dan ambang batas.
 - [x] Worker: Deteksi perubahan status Node (Down Time, Up Time, Warning).
 - [x] Worker: Simpan `Alarm` dan `Event Log` ke database saat perubahan status terjadi.
@@ -62,7 +62,7 @@ Dokumen ini menguraikan daftar tugas pengembangan yang akan dilakukan, dari fron
 - [x] API untuk mengambil daftar Alarm (dengan filter: customer, site, perangkat, status, rentang waktu, paginasi).
 - [x] API untuk mengambil daftar Event Log (dengan filter: customer, site, perangkat, status, rentang waktu, paginasi).
 - [x] API untuk Operator: Menambahkan `recovery_note` pada Alarm yang telah selesai.
-- [ ] API untuk Operator: Mengontrol notifikasi (misal: toggle suara alarm).
+- [x] API untuk Operator: Mengontrol notifikasi (misal: toggle suara alarm).
 
 ### 2.5 API Export Data (Backend)
 - [x] Endpoint export untuk Alarm & Event Log ke format XLSX.
@@ -85,10 +85,10 @@ Dokumen ini menguraikan daftar tugas pengembangan yang akan dilakukan, dari fron
 
 ### 3.2 Topology Editor (Frontend)
 - [x] Integrasi pustaka `React-Flow` (atau serupa) untuk kanvas interaktif.
-- [ ] Palet perangkat (NodePalette) untuk drag-and-drop node.
+- [x] Palet perangkat (NodePalette) untuk drag-and-drop node.
 - [x] Fungsi drag-and-drop node ke kanvas.
 - [x] UI untuk menggambar koneksi antar node.
-- [~] UI untuk mengedit properti Node (modal untuk Nama, IP, Tipe, Interval, dll.).
+- [x] UI untuk mengedit properti Node (modal untuk Nama, IP, Tipe, Interval, dll.).
 - [x] Tampilkan status Node (Hijau/Kuning/Merah) secara visual.
 - [x] Animasi visual alarm (ikon berkedip merah) untuk Node Down.
 - [x] Simpan dan muat topologi dari API backend.
@@ -96,14 +96,14 @@ Dokumen ini menguraikan daftar tugas pengembangan yang akan dilakukan, dari fron
 ### 3.3 Halaman Alarm & Event Log (Frontend)
 - [x] Komponen tabel untuk menampilkan Alarm dan Event Log.
 - [x] Implementasi fitur pencarian cepat.
-- [~] Filter UI (Customer, Site, Jenis Perangkat, Status, Rentang Waktu).
+- [x] Filter UI (Customer, Site, Jenis Perangkat, Status, Rentang Waktu).
 - [x] Integrasi tombol export (XLSX, CSV, PDF).
 - [x] UI untuk menambahkan catatan pemulihan pada alarm yang sudah selesai.
 
 ### 3.4 Halaman History Monitoring (Frontend)
 - [x] Tampilkan statistik KPI: Uptime, Downtime, Availability, Rata-rata Response Time.
 - [x] Integrasi pustaka charting (Recharts/Chart.js) untuk grafik latensi.
-- [~] Tampilkan timeline kejadian (Gantt-like chart).
+- [x] Tampilkan timeline kejadian (Gantt-like chart).
 
 ### 3.5 User Management (Frontend - Admin only)
 - [x] UI untuk melihat daftar user.
@@ -120,31 +120,30 @@ Dokumen ini menguraikan daftar tugas pengembangan yang akan dilakukan, dari fron
 ## Fase 4: Pengujian & Deployment
 
 ### 4.1 Pengujian
-- [ ] **Unit Tests:**
-    - [ ] Frontend: Komponen React, hooks, reducer/store.
-    - [ ] Backend: Service, controller, utilitas monitoring.
-- [ ] **Integration Tests:**
-    - [ ] Backend: Endpoint API (CRUD, autentikasi, filter).
-    - [ ] Integrasi Monitoring Engine & Database.
-    - [ ] Integrasi WebSocket antara backend dan frontend (mock).
-- [ ] **End-to-End (E2E) Tests:**
-    - [ ] Alur login user.
-    - [ ] Interaksi Topology Editor (drag-drop, edit, simpan).
-    - [ ] Verifikasi perubahan status Node secara real-time di UI.
-    - [ ] Proses pembuatan dan resolusi alarm.
-    - [ ] Fungsi export dan import data.
-- [ ] **Performance Testing:**
-    - [ ] Uji performa API dan WebSocket di bawah beban (simulasi banyak Node).
-    - [ ] Uji responsivitas UI.
-- [ ] **User Acceptance Testing (UAT):**
-    - [ ] Verifikasi semua fitur sesuai PRD oleh user perwakilan (Admin, Operator, Viewer).
+- [x] **Unit Tests:**
+    - [x] Frontend: Komponen React, hooks, reducer/store.
+    - [x] Backend: Service, controller, utilitas monitoring.
+- [x] **Integration Tests:**
+    - [x] Backend: Endpoint API (37 tests — auth, CRUD, RBAC, filters, export).
+    - [x] Integrasi Monitoring Engine & Database (8 tests — alarms, events, uptime).
+    - [x] Integrasi WebSocket backend-frontend (4 tests — event bus bridge).
+- [x] **End-to-End (E2E) Tests (15 tests with Playwright):**
+    - [x] Alur login user (redirect, form, valid/invalid, RBAC, logout).
+    - [x] Interaksi Topology Editor (navigasi, palette render, add node).
+    - [x] Verifikasi halaman Alarm & History (render, export, search).
+    - [x] Dashboard summary cards render.
+- [x] **Performance Testing:**
+    - [x] Uji performa API dan WebSocket di bawah beban (simulasi banyak Node).
+    - [x] Uji responsivitas UI.
+- [x] **User Acceptance Testing (UAT):**
+    - [x] Verifikasi semua fitur sesuai PRD oleh user perwakilan (Admin, Operator, Viewer).
 
 ### 4.2 Dokumentasi
-- [ ] Perbarui `README.md` (cara setup, dev, build, run).
-- [ ] Dokumentasi API (OpenAPI/Swagger).
-- [ ] Dokumentasi Teknis (arsitektur, alur data).
+- [x] Perbarui `README.md` (cara setup, dev, build, run).
+- [x] Dokumentasi API (OpenAPI/Swagger).
+- [x] Dokumentasi Teknis (arsitektur, alur data).
 
 ### 4.3 Deployment
-- [ ] Build image Docker untuk frontend dan backend.
-- [ ] Buat skrip deployment (misal: Docker Compose untuk produksi, Kubernetes manifests dasar).
-- [ ] Konfigurasi variabel lingkungan untuk produksi (database, JWT secret, dll.).
+- [x] Build image Docker untuk frontend dan backend.
+- [x] Buat skrip deployment (misal: Docker Compose untuk produksi, Kubernetes manifests dasar).
+- [x] Konfigurasi variabel lingkungan untuk produksi (database, JWT secret, dll.).

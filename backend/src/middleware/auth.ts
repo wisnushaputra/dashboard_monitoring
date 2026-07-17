@@ -18,13 +18,19 @@ declare global {
 }
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  let token = ''
   const header = req.headers.authorization
-  if (!header || !header.startsWith('Bearer ')) {
+  if (header && header.startsWith('Bearer ')) {
+    token = header.split(' ')[1]
+  } else if (req.query && req.query.token) {
+    token = req.query.token as string
+  }
+
+  if (!token) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
 
-  const token = header.split(' ')[1]
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthPayload
     req.user = payload

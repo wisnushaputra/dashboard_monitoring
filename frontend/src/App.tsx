@@ -7,6 +7,7 @@ import Topology from './pages/Topology'
 import Alarms from './pages/Alarms'
 import History from './pages/History'
 import Users from './pages/Users'
+import Reports from './pages/Reports'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -26,6 +27,7 @@ function App() {
           <Route path="/alarms" element={<ProtectedRoute><Alarms /></ProtectedRoute>} />
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
           <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
+          <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

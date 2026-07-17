@@ -39,10 +39,11 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Dashboard summary
 router.get('/summary', async (req: Request, res: Response) => {
-  const [totalSites, totalNodes, onlineNodes, activeAlarms, recentEvents] = await Promise.all([
+  const [totalSites, totalNodes, onlineNodes, maintenanceNodes, activeAlarms, recentEvents] = await Promise.all([
     prisma.site.count(),
     prisma.node.count(),
     prisma.node.count({ where: { status: 'up' } }),
+    prisma.node.count({ where: { status: 'maintenance' } }),
     prisma.alarm.count({ where: { status: 'active' } }),
     prisma.eventLog.findMany({
       orderBy: { timestamp: 'desc' },
@@ -55,7 +56,8 @@ router.get('/summary', async (req: Request, res: Response) => {
     totalSites,
     totalNodes,
     onlineNodes,
-    offlineNodes: totalNodes - onlineNodes,
+    maintenanceNodes,
+    offlineNodes: totalNodes - onlineNodes - maintenanceNodes,
     activeAlarms,
     recentEvents,
   })
@@ -80,7 +82,13 @@ router.get('/history/:nodeId', async (req: Request, res: Response) => {
     }),
   ])
 
-  const totalDowntime = alarms.reduce((sum, a) => sum + (a.duration || 0), 0)
+  const now = new Date()
+  const totalDowntime = alarms.reduce((sum, a) => {
+    const dur = a.duration || (a.endTime
+      ? Math.floor((new Date(a.endTime).getTime() - new Date(a.startTime).getTime()) / 1000)
+      : Math.floor((now.getTime() - new Date(a.startTime).getTime()) / 1000))
+    return sum + Math.max(0, dur)
+  }, 0)
   const totalSeconds = parseInt(days as string) * 86400
   const availability = totalSeconds > 0 ? ((totalSeconds - totalDowntime) / totalSeconds * 100) : 100
 

@@ -61,6 +61,7 @@ model Node {
   packetLoss        Float?   @map("packet_loss")
   lastChecked       DateTime? @map("last_checked")
   enabled           Boolean  @default(true)
+  isMaintenance      Boolean  @default(false) @map("is_maintenance")
   x                 Float?   // canvas position for topology
   y                 Float?
   customerId        Int      @map("customer_id")
@@ -73,18 +74,21 @@ model Node {
   eventLogs         EventLog[]
   connectionsFrom   Connection[] @relation("from_node")
   connectionsTo     Connection[] @relation("to_node")
+  maintenanceWindows MaintenanceWindow[]
 
   @@map("nodes")
 }
 
 model Connection {
-  id        Int      @id @default(autoincrement())
-  fromNodeId Int     @map("from_node_id")
-  toNodeId  Int      @map("to_node_id")
-  label     String?
-  color     String?  @default("#94a3b8")
-  fromNode  Node     @relation("from_node", fields: [fromNodeId], references: [id], onDelete: Cascade)
-  toNode    Node     @relation("to_node", fields: [toNodeId], references: [id], onDelete: Cascade)
+  id          Int      @id @default(autoincrement())
+  fromNodeId  Int      @map("from_node_id")
+  toNodeId    Int      @map("to_node_id")
+  sourceHandle String?  @map("source_handle")
+  targetHandle String?  @map("target_handle")
+  label       String?
+  color       String?  @default("#94a3b8")
+  fromNode    Node     @relation("from_node", fields: [fromNodeId], references: [id], onDelete: Cascade)
+  toNode      Node     @relation("to_node", fields: [toNodeId], references: [id], onDelete: Cascade)
 
   @@map("connections")
 }
@@ -143,4 +147,17 @@ model NotificationSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("notification_settings")
+}
+
+model MaintenanceWindow {
+  id          Int      @id @default(autoincrement())
+  nodeId      Int      @map("node_id")
+  node        Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  startTime   DateTime @map("start_time")
+  endTime     DateTime @map("end_time")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("maintenance_windows")
 }

@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
 import { authMiddleware, roleMiddleware } from '../middleware/auth'
+import { spawn } from 'child_process'
+import eventEmitter from '../lib/eventEmitter'
 
 const router = Router()
 
@@ -29,6 +31,192 @@ router.get('/', async (req: Request, res: Response) => {
   res.json(nodes)
 })
 
+// Connection endpoints
+router.get('/connections', async (req: Request, res: Response) => {
+  try {
+    const connections = await prisma.connection.findMany()
+    res.json(connections)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/connections', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const { fromNodeId, toNodeId, sourceHandle, targetHandle } = req.body
+  if (!fromNodeId || !toNodeId) {
+    res.status(400).json({ error: 'fromNodeId and toNodeId required' })
+    return
+  }
+  try {
+    const fromId = parseInt(fromNodeId)
+    const toId = parseInt(toNodeId)
+    const exists = await prisma.connection.findFirst({
+      where: {
+        fromNodeId: fromId,
+        toNodeId: toId,
+        sourceHandle: sourceHandle || null,
+        targetHandle: targetHandle || null,
+      }
+    })
+    if (exists) {
+      res.status(200).json(exists)
+      return
+    }
+
+    const connection = await prisma.connection.create({
+      data: {
+        fromNodeId: fromId,
+        toNodeId: toId,
+        sourceHandle: sourceHandle || null,
+        targetHandle: targetHandle || null,
+      }
+    })
+    res.status(201).json(connection)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/connections/:id', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  try {
+    await prisma.connection.delete({ where: { id } })
+    res.json({ message: 'Connection deleted' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/:id/diagnostic', async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  const type = req.query.type as string
+  
+  if (!type || (type !== 'ping' && type !== 'traceroute')) {
+    res.status(400).json({ error: 'Valid type (ping or traceroute) is required' })
+    return
+  }
+
+  const node = await prisma.node.findUnique({ where: { id } })
+  if (!node) {
+    res.status(404).json({ error: 'Node not found' })
+    return
+  }
+
+  const ip = node.ipAddress
+
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  let child: any
+
+  if (type === 'ping') {
+    child = spawn('ping', ['-c', '5', ip])
+  } else {
+    child = spawn('traceroute', [ip])
+  }
+
+  const streamOutput = (data: Buffer) => {
+    const lines = data.toString().split('\n')
+    lines.forEach((line) => {
+      if (line.trim()) {
+        res.write(`data: ${JSON.stringify({ text: line })}\n\n`)
+      }
+    })
+  }
+
+  child.stdout.on('data', streamOutput)
+  child.stderr.on('data', streamOutput)
+
+  child.on('error', (err: any) => {
+    let msg = `Error: ${err.message}\n`
+    if (type === 'traceroute' && err.code === 'ENOENT') {
+      msg = `Error: traceroute is not installed on this server. Please install it or use ping diagnostic.\n`
+    }
+    res.write(`data: ${JSON.stringify({ text: msg, error: true })}\n\n`)
+    res.end()
+  })
+
+  child.on('close', (code: number) => {
+    res.write(`data: ${JSON.stringify({ text: `Process exited with code ${code}`, done: true })}\n\n`)
+    res.end()
+  })
+
+  req.on('close', () => {
+    if (child) {
+      child.kill()
+    }
+  })
+})
+
+router.put('/:id/maintenance', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  const { isMaintenance } = req.body
+  try {
+    const node = await prisma.node.update({
+      where: { id },
+      data: {
+        isMaintenance,
+        ...(isMaintenance && { status: 'maintenance' }),
+      },
+    })
+    
+    if (isMaintenance) {
+      eventEmitter.emit('node:status', {
+        nodeId: id,
+        status: 'maintenance',
+        lastChecked: new Date(),
+      })
+    }
+    
+    res.json(node)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/:id/maintenance-windows', async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  try {
+    const windows = await prisma.maintenanceWindow.findMany({
+      where: { nodeId: id },
+      orderBy: { startTime: 'asc' },
+    })
+    res.json(windows)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/:id/maintenance-windows', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  const { startTime, endTime, description } = req.body
+  try {
+    const mw = await prisma.maintenanceWindow.create({
+      data: {
+        nodeId: id,
+        startTime: new Date(startTime),
+        endTime: new Date(endTime),
+        description,
+      },
+    })
+    res.status(201).json(mw)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/maintenance-windows/:windowId', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const windowId = parseInt(req.params.windowId)
+  try {
+    await prisma.maintenanceWindow.delete({ where: { id: windowId } })
+    res.json({ message: 'Maintenance window deleted' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/:id', async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const node = await prisma.node.findUnique({
@@ -50,6 +238,27 @@ router.post('/', roleMiddleware('admin'), async (req: Request, res: Response) =>
     data: { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId: siteId || null, x, y },
   })
   res.status(201).json(node)
+})
+
+router.put('/positions', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const { positions } = req.body
+  if (!Array.isArray(positions)) {
+    res.status(400).json({ error: 'Positions list required' })
+    return
+  }
+  try {
+    await prisma.$transaction(
+      positions.map((p: any) =>
+        prisma.node.update({
+          where: { id: parseInt(p.id) },
+          data: { x: p.x, y: p.y },
+        })
+      )
+    )
+    res.json({ message: 'Positions updated successfully' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 router.put('/:id', roleMiddleware('admin'), async (req: Request, res: Response) => {

@@ -1,18 +1,25 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { Network } from 'lucide-react'
+import { useNavigate, Navigate } from 'react-router-dom'
 
 export default function Login() {
-  const { login } = useAuth()
+  const { login, user } = useAuth()
+  const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+
+  if (user) {
+    return <Navigate to="/" replace />
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     try {
       await login(username, password)
+      navigate('/')
     } catch {
       setError('Invalid credentials')
     }

@@ -54,4 +54,18 @@ router.put('/:id/resolve', async (req: Request, res: Response) => {
   res.json(updated)
 })
 
+router.put('/:id/note', async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  const { recoveryNote, cause } = req.body
+
+  const alarm = await prisma.alarm.findUnique({ where: { id } })
+  if (!alarm) { res.status(404).json({ error: 'Alarm not found' }); return }
+
+  const updated = await prisma.alarm.update({
+    where: { id },
+    data: { recoveryNote, cause },
+  })
+  res.json(updated)
+})
+
 export default router

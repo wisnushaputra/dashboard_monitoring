@@ -29,11 +29,12 @@ export default function History() {
   const ganttData = data?.alarms?.map((a: any) => {
     const start = new Date(a.startTime)
     const end = a.endTime ? new Date(a.endTime) : new Date()
-    const labelStart = start.toLocaleDateString('id-ID', { month: 'short', day: 'numeric', hour: '2-digit' })
-    const labelEnd = end.toLocaleDateString('id-ID', { month: 'short', day: 'numeric', hour: '2-digit' })
+    const computedDuration = a.duration || Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000))
+    const labelStart = start.toLocaleDateString('id-ID', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const labelEnd = end.toLocaleDateString('id-ID', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
     return {
       name: `${labelStart} - ${labelEnd}`,
-      duration: a.duration ? Math.round(a.duration / 60) : 0, // in minutes
+      duration: Math.round(computedDuration / 60), // in minutes
       status: a.status,
       id: a.id,
     }

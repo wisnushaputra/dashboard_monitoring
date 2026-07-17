@@ -26,6 +26,20 @@ async function main() {
     create: { username: 'viewer', passwordHash: viewerPassword, role: 'viewer' },
   })
 
+  // Seed default customer
+  await prisma.customer.upsert({
+    where: { code: 'DFT' },
+    update: {},
+    create: { id: 1, name: 'Default Customer', code: 'DFT' },
+  })
+
+  // Seed default site
+  await prisma.site.upsert({
+    where: { name_customerId: { name: 'Default Site', customerId: 1 } },
+    update: {},
+    create: { id: 1, name: 'Default Site', location: 'Head Office', customerId: 1 },
+  })
+
   console.log('Seeded users:', admin.username)
 }
 
