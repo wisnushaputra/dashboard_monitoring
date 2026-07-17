@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  role         String   @default("viewer") // admin, operator, viewer
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  sites     Site[]
+  nodes     Node[]
+
+  @@map("customers")
+}
+
+model Site {
+  id         Int      @id @default(autoincrement())
+  name       String
+  location   String?
+  customerId Int      @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  nodes      Node[]
+
+  @@unique([name, customerId])
+  @@map("sites")
+}
+
+model Node {
+  id                Int      @id @default(autoincrement())
+  name              String
+  ipAddress         String   @map("ip_address")
+  deviceType        String   @default("router") @map("device_type") // router, switch, firewall, server, olt, ap, etc
+  location          String?
+  description       String?
+  monitoringInterval Int     @default(30) @map("monitoring_interval") // seconds
+  monitorType       String   @default("icmp") @map("monitor_type") // icmp, snmp, http, tcp
+  monitorConfig     Json?    @map("monitor_config")
+  status            String   @default("unknown") // up, down, warning, unknown
+  latencyMs         Float?   @map("latency_ms")
+  lastChecked       DateTime? @map("last_checked")
+  enabled           Boolean  @default(true)
+  x                 Float?   // canvas position for topology
+  y                 Float?
+  customerId        Int      @map("customer_id")
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteId            Int?     @map("site_id")
+  site              Site?    @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  alarms            Alarm[]
+  eventLogs         EventLog[]
+  connectionsFrom   Connection[] @relation("from_node")
+  connectionsTo     Connection[] @relation("to_node")
+
+  @@map("nodes")
+}
+
+model Connection {
+  id        Int      @id @default(autoincrement())
+  fromNodeId Int     @map("from_node_id")
+  toNodeId  Int      @map("to_node_id")
+  label     String?
+  color     String?  @default("#94a3b8")
+  fromNode  Node     @relation("from_node", fields: [fromNodeId], references: [id], onDelete: Cascade)
+  toNode    Node     @relation("to_node", fields: [toNodeId], references: [id], onDelete: Cascade)
+
+  @@map("connections")
+}
+
+model Topology {
+  id        Int      @id @default(autoincrement())
+  name      String
+  data      Json?    // stores full canvas state (nodes positions, connections)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("topologies")
+}
+
+model Alarm {
+  id          Int       @id @default(autoincrement())
+  nodeId      Int       @map("node_id")
+  node        Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  status      String    @default("active") // active, resolved
+  startTime   DateTime  @map("start_time")
+  endTime     DateTime? @map("end_time")
+  duration    Int?      // seconds
+  cause       String?
+  recoveryNote String?  @map("recovery_note")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("alarms")
+}
+
+model EventLog {
+  id        Int      @id @default(autoincrement())
+  nodeId    Int      @map("node_id")
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  eventType String   @map("event_type") // up, down, warning
+  message   String?
+  latencyMs Float?   @map("latency_ms")
+  timestamp DateTime @default(now())
+
+  @@map("event_logs")
+}
