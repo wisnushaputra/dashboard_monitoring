@@ -4,21 +4,28 @@ import socket from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
 import { Search, Download } from 'lucide-react'
 
+const deviceTypes = ['router', 'switch', 'firewall', 'server', 'olt', 'ap', 'modem', 'ups']
+
 export default function Alarms() {
   const { user } = useAuth()
   const [alarms, setAlarms] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState({ status: '', startDate: '', endDate: '' })
+  const [customers, setCustomers] = useState<any[]>([])
+  const [filter, setFilter] = useState({ status: '', deviceType: '', customerId: '', startDate: '', endDate: '' })
   const [resolveNote, setResolveNote] = useState('')
   const [resolveId, setResolveId] = useState<number | null>(null)
   const limit = 25
+
+  useEffect(() => { api.customers.list().then(setCustomers).catch(() => {}) }, [])
 
   const load = async () => {
     const params: Record<string, string> = { page: String(page), limit: String(limit) }
     if (search) params.search = search
     if (filter.status) params.status = filter.status
+    if (filter.deviceType) params.deviceType = filter.deviceType
+    if (filter.customerId) params.customerId = filter.customerId
     if (filter.startDate) params.startDate = filter.startDate
     if (filter.endDate) params.endDate = filter.endDate
     const res = await api.alarms.list(params)
@@ -56,18 +63,27 @@ export default function Alarms() {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold">Alarm & Event Log</h1>
 
-      {/* Search & Filter */}
       <div className="flex flex-wrap gap-2 items-center">
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative flex-1 min-w-[160px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
           <input className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm dark:bg-zinc-700" placeholder="Search node..." value={search}
             onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <select className="px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700" value={filter.status}
-          onChange={(e) => setFilter({ ...filter, status: e.target.value })}>
+          onChange={(e) => { setFilter({ ...filter, status: e.target.value }); setPage(1) }}>
           <option value="">All Status</option>
           <option value="active">Active</option>
           <option value="resolved">Resolved</option>
+        </select>
+        <select className="px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700" value={filter.deviceType}
+          onChange={(e) => { setFilter({ ...filter, deviceType: e.target.value }); setPage(1) }}>
+          <option value="">All Types</option>
+          {deviceTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select className="px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700" value={filter.customerId}
+          onChange={(e) => { setFilter({ ...filter, customerId: e.target.value }); setPage(1) }}>
+          <option value="">All Customers</option>
+          {customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <input type="date" className="px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700" value={filter.startDate}
           onChange={(e) => setFilter({ ...filter, startDate: e.target.value })} />
@@ -75,7 +91,7 @@ export default function Alarms() {
           onChange={(e) => setFilter({ ...filter, endDate: e.target.value })} />
         <div className="flex gap-1">
           {['Xlsx', 'Csv', 'Pdf'].map((fmt) => (
-            <a key={fmt} href={exportUrl(fmt)} target="_blank"
+            <a key={fmt} href={exportUrl(fmt)} target="_blank" rel="noreferrer"
               className="flex items-center gap-1 px-2.5 py-2 border rounded-lg text-xs hover:bg-zinc-100 dark:hover:bg-zinc-700">
               <Download className="w-3 h-3" />{fmt}
             </a>
@@ -83,7 +99,6 @@ export default function Alarms() {
         </div>
       </div>
 
-      {/* Table */}
       <div className="bg-white dark:bg-zinc-800 rounded-xl border overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-xs text-zinc-500 uppercase border-b">
@@ -115,7 +130,8 @@ export default function Alarms() {
                 {user?.role !== 'viewer' && (
                   <td className="px-4 py-2">
                     {a.status === 'active' && (
-                      <button onClick={() => setResolveId(a.id)} className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+                      <button onClick={() => setResolveId(a.id)}
+                        className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
                         Resolve
                       </button>
                     )}
@@ -128,7 +144,6 @@ export default function Alarms() {
         </table>
       </div>
 
-      {/* Pagination */}
       <div className="flex items-center justify-between text-sm text-zinc-500">
         <span>{total} total</span>
         <div className="flex gap-2">
@@ -138,7 +153,6 @@ export default function Alarms() {
         </div>
       </div>
 
-      {/* Resolve Modal */}
       {resolveId !== null && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setResolveId(null)}>
           <div className="bg-white dark:bg-zinc-800 rounded-xl border shadow-lg p-5 w-full max-w-sm m-4" onClick={(e) => e.stopPropagation()}>

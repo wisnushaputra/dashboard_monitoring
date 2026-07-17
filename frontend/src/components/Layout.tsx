@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
-  LayoutDashboard, Network, Bell, History, LogOut, Menu, X, Moon, Sun, Volume2, VolumeX, Users
+  LayoutDashboard, Network, Bell, History, LogOut, Menu, Moon, Sun, Volume2, VolumeX, Users
 } from 'lucide-react'
 
 const navItems = [

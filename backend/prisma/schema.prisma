@@ -56,6 +56,9 @@ model Node {
   monitorConfig     Json?    @map("monitor_config")
   status            String   @default("unknown") // up, down, warning, unknown
   latencyMs         Float?   @map("latency_ms")
+  minLatencyMs      Float?   @map("min_latency_ms")
+  maxLatencyMs      Float?   @map("max_latency_ms")
+  packetLoss        Float?   @map("packet_loss")
   lastChecked       DateTime? @map("last_checked")
   enabled           Boolean  @default(true)
   x                 Float?   // canvas position for topology
@@ -118,7 +121,26 @@ model EventLog {
   eventType String   @map("event_type") // up, down, warning
   message   String?
   latencyMs Float?   @map("latency_ms")
+  minLatencyMs Float? @map("min_latency_ms")
+  maxLatencyMs Float? @map("max_latency_ms")
+  packetLoss Float?   @map("packet_loss")
   timestamp DateTime @default(now())
 
   @@map("event_logs")
+}
+
+model NotificationSetting {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique @map("user_id")
+  soundEnabled Boolean @default(true) @map("sound_enabled")
+  emailEnabled Boolean @default(false) @map("email_enabled")
+  emailAddress String? @map("email_address")
+  webhookEnabled Boolean @default(false) @map("webhook_enabled")
+  webhookUrl  String? @map("webhook_url")
+  slackEnabled Boolean @default(false) @map("slack_enabled")
+  slackWebhook String? @map("slack_webhook")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_settings")
 }
