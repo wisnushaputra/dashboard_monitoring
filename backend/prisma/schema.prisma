@@ -161,3 +161,17 @@ model MaintenanceWindow {
 
   @@map("maintenance_windows")
 }
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  username  String
+  action    String
+  target    String?
+  details   String?
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}
+

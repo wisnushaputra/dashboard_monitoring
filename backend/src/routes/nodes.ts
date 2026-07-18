@@ -3,6 +3,7 @@ import prisma from '../lib/prisma'
 import { authMiddleware, roleMiddleware } from '../middleware/auth'
 import { spawn } from 'child_process'
 import eventEmitter from '../lib/eventEmitter'
+import { logAudit } from '../lib/audit'
 
 const router = Router()
 
@@ -29,6 +30,26 @@ router.get('/', async (req: Request, res: Response) => {
     orderBy: { name: 'asc' },
   })
   res.json(nodes)
+})
+router.get('/maintenance-windows/all', async (req: Request, res: Response) => {
+  try {
+    const windows = await prisma.maintenanceWindow.findMany({
+      include: {
+        node: {
+          select: {
+            name: true,
+            ipAddress: true,
+            deviceType: true,
+            status: true,
+          }
+        }
+      },
+      orderBy: { startTime: 'desc' },
+    })
+    res.json(windows)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // Connection endpoints
@@ -169,6 +190,15 @@ router.put('/:id/maintenance', roleMiddleware('admin'), async (req: Request, res
         lastChecked: new Date(),
       })
     }
+
+    logAudit({
+      userId: req.user?.userId,
+      username: req.user?.username || 'System',
+      action: 'NODE_MAINTENANCE_TOGGLE',
+      target: node.name,
+      details: `Manual Maintenance Mode: ${isMaintenance ? 'ENABLED' : 'DISABLED'}`,
+      ipAddress: req.ip
+    }).catch(console.error)
     
     res.json(node)
   } catch (err: any) {
@@ -200,7 +230,18 @@ router.post('/:id/maintenance-windows', roleMiddleware('admin'), async (req: Req
         endTime: new Date(endTime),
         description,
       },
+      include: { node: true }
     })
+
+    logAudit({
+      userId: req.user?.userId,
+      username: req.user?.username || 'System',
+      action: 'MAINTENANCE_SCHEDULE',
+      target: mw.node.name,
+      details: `Scheduled window: ${new Date(startTime).toLocaleString('id-ID')} to ${new Date(endTime).toLocaleString('id-ID')}. Reason: ${description || '-'}`,
+      ipAddress: req.ip
+    }).catch(console.error)
+
     res.status(201).json(mw)
   } catch (err: any) {
     res.status(500).json({ error: err.message })
@@ -210,7 +251,26 @@ router.post('/:id/maintenance-windows', roleMiddleware('admin'), async (req: Req
 router.delete('/maintenance-windows/:windowId', roleMiddleware('admin'), async (req: Request, res: Response) => {
   const windowId = parseInt(req.params.windowId)
   try {
+    const mw = await prisma.maintenanceWindow.findUnique({
+      where: { id: windowId },
+      include: { node: true }
+    })
+    if (!mw) {
+      res.status(404).json({ error: 'Maintenance window not found' })
+      return
+    }
+
     await prisma.maintenanceWindow.delete({ where: { id: windowId } })
+
+    logAudit({
+      userId: req.user?.userId,
+      username: req.user?.username || 'System',
+      action: 'MAINTENANCE_DELETE',
+      target: mw.node.name,
+      details: `Deleted scheduled window (${new Date(mw.startTime).toLocaleString('id-ID')} - ${new Date(mw.endTime).toLocaleString('id-ID')})`,
+      ipAddress: req.ip
+    }).catch(console.error)
+
     res.json({ message: 'Maintenance window deleted' })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
@@ -237,6 +297,16 @@ router.post('/', roleMiddleware('admin'), async (req: Request, res: Response) =>
   const node = await prisma.node.create({
     data: { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId: siteId || null, x, y },
   })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'NODE_CREATE',
+    target: node.name,
+    details: `IP: ${node.ipAddress}, Type: ${node.deviceType}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.status(201).json(node)
 })
 
@@ -281,12 +351,37 @@ router.put('/:id', roleMiddleware('admin'), async (req: Request, res: Response) 
   if (enabled !== undefined) data.enabled = enabled
 
   const node = await prisma.node.update({ where: { id }, data })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'NODE_UPDATE',
+    target: node.name,
+    details: `Updated fields. IP: ${node.ipAddress}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json(node)
 })
 
 router.delete('/:id', roleMiddleware('admin'), async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
+  const targetNode = await prisma.node.findUnique({ where: { id } })
+  if (!targetNode) {
+    res.status(404).json({ error: 'Node not found' })
+    return
+  }
   await prisma.node.delete({ where: { id } })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'NODE_DELETE',
+    target: targetNode.name,
+    details: `Deleted node with IP: ${targetNode.ipAddress}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json({ message: 'Node deleted' })
 })
 
@@ -307,6 +402,15 @@ router.post('/import', roleMiddleware('admin'), async (req: Request, res: Respon
     monitoringInterval: n.monitoringInterval || n.Interval_Detik || 30,
     customerId: n.customerId || 1,
   })) })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'NODE_IMPORT',
+    target: `${created.count} devices`,
+    details: `Bulk imported nodes`,
+    ipAddress: req.ip
+  }).catch(console.error)
 
   res.status(201).json({ count: created.count })
 })

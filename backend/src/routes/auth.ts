@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import prisma from '../lib/prisma'
 import { signToken, authMiddleware, roleMiddleware } from '../middleware/auth'
+import { logAudit } from '../lib/audit'
 
 const router = Router()
 
@@ -19,6 +20,16 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 
   const token = signToken({ userId: user.id, username: user.username, role: user.role })
+
+  logAudit({
+    userId: user.id,
+    username: user.username,
+    action: 'LOGIN',
+    target: 'Self',
+    details: `Role: ${user.role}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json({ token, user: { id: user.id, username: user.username, role: user.role } })
 })
 
@@ -51,6 +62,16 @@ router.post('/', authMiddleware, roleMiddleware('admin'), async (req: Request, r
     data: { username, passwordHash, role: role || 'viewer' },
     select: { id: true, username: true, role: true, createdAt: true },
   })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'USER_CREATE',
+    target: user.username,
+    details: `Role: ${user.role}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.status(201).json(user)
 })
 
@@ -68,12 +89,38 @@ router.put('/:id', authMiddleware, roleMiddleware('admin'), async (req: Request,
     data,
     select: { id: true, username: true, role: true, createdAt: true },
   })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'USER_UPDATE',
+    target: user.username,
+    details: `Updated attributes. Role: ${user.role}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json(user)
 })
 
 router.delete('/:id', authMiddleware, roleMiddleware('admin'), async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
+  const targetUser = await prisma.user.findUnique({ where: { id } })
+  if (!targetUser) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+
   await prisma.user.delete({ where: { id } })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'USER_DELETE',
+    target: targetUser.username,
+    details: `Deleted user with role: ${targetUser.role}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json({ message: 'User deleted' })
 })
 

@@ -49,6 +49,8 @@ export const api = {
       request(`/nodes/${id}/maintenance`, { method: 'PUT', body: JSON.stringify({ isMaintenance }) }),
     listMaintenanceWindows: (id: number) =>
       request(`/nodes/${id}/maintenance-windows`),
+    listAllMaintenanceWindows: () =>
+      request('/nodes/maintenance-windows/all'),
     createMaintenanceWindow: (id: number, data: { startTime: string; endTime: string; description?: string }) =>
       request(`/nodes/${id}/maintenance-windows`, { method: 'POST', body: JSON.stringify(data) }),
     deleteMaintenanceWindow: (windowId: number) =>
@@ -93,5 +95,9 @@ export const api = {
       `${BASE}/reports/sla/pdf?customerId=${customerId}&startDate=${startDate}&endDate=${endDate}&token=${token}`,
     xlsxUrl: (customerId: number, startDate: string, endDate: string) =>
       `${BASE}/reports/sla/xlsx?customerId=${customerId}&startDate=${startDate}&endDate=${endDate}&token=${token}`,
+  },
+  audit: {
+    list: (params?: Record<string, string>) =>
+      request(`/audit-logs?${new URLSearchParams(params || {})}`),
   },
 }

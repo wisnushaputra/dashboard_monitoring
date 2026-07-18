@@ -274,20 +274,26 @@ export default function Topology() {
         api.connections.list(),
       ])
 
-      const flowNodes: Node[] = nodesData.map((n: any) => ({
-        id: String(n.id),
-        type: 'statusNode',
-        position: { x: n.x || Math.random() * 500, y: n.y || Math.random() * 400 },
-        data: {
-          label: n.name, ipAddress: n.ipAddress, deviceType: n.deviceType,
-          status: n.status || 'unknown', color: n.color,
-          location: n.location, description: n.description,
-          monitoringInterval: n.monitoringInterval, customerId: n.customerId,
-          isMaintenance: n.isMaintenance,
-          monitorConfig: n.monitorConfig,
-        },
-        draggable: isAdmin,
-      }))
+      let needsLayout = false
+      const flowNodes: Node[] = nodesData.map((n: any) => {
+        if (n.x === null || n.y === null) {
+          needsLayout = true
+        }
+        return {
+          id: String(n.id),
+          type: 'statusNode',
+          position: { x: n.x ?? (Math.random() * 200 + 300), y: n.y ?? (Math.random() * 200 + 200) },
+          data: {
+            label: n.name, ipAddress: n.ipAddress, deviceType: n.deviceType,
+            status: n.status || 'unknown', color: n.color,
+            location: n.location, description: n.description,
+            monitoringInterval: n.monitoringInterval, customerId: n.customerId,
+            isMaintenance: n.isMaintenance,
+            monitorConfig: n.monitorConfig,
+          },
+          draggable: isAdmin,
+        }
+      })
       setNodes(flowNodes)
 
       const flowEdges: Edge[] = connectionsData.map((c: any) => ({
@@ -299,15 +305,24 @@ export default function Topology() {
         markerEnd: { type: MarkerType.ArrowClosed },
       }))
       setEdges(flowEdges)
+
+      if (needsLayout && flowNodes.length > 0) {
+        // Run automatic force layout to distribute nodes nicely
+        setTimeout(() => {
+          handleLayout('force', flowNodes, flowEdges)
+        }, 100)
+      }
     } catch { } finally { setLoading(false) }
   }, [isAdmin])
 
-  const handleLayout = async (type: 'grid' | 'circular' | 'force') => {
+  const handleLayout = async (type: 'grid' | 'circular' | 'force', nodesToLayout?: Node[], edgesToLayout?: Edge[]) => {
+    const currentNodes = nodesToLayout || nodes
+    const currentEdges = edgesToLayout || edges
     let updatedNodes: Node[] = []
     
     if (type === 'grid') {
       const typeOrder = ['router', 'firewall', 'switch', 'olt', 'ap', 'modem', 'server', 'ups']
-      const sorted = [...nodes].sort((a, b) => {
+      const sorted = [...currentNodes].sort((a, b) => {
         const orderA = typeOrder.indexOf(a.data.deviceType as string)
         const orderB = typeOrder.indexOf(b.data.deviceType as string)
         return (orderA === -1 ? 99 : orderA) - (orderB === -1 ? 99 : orderB)
@@ -330,10 +345,10 @@ export default function Topology() {
       })
     } else if (type === 'circular') {
       const center = { x: 400, y: 300 }
-      const radius = Math.max(150, nodes.length * 35)
+      const radius = Math.max(150, currentNodes.length * 35)
 
-      updatedNodes = nodes.map((node, index) => {
-        const angle = (index / nodes.length) * 2 * Math.PI
+      updatedNodes = currentNodes.map((node, index) => {
+        const angle = (index / currentNodes.length) * 2 * Math.PI
         return {
           ...node,
           position: {
@@ -346,7 +361,7 @@ export default function Topology() {
       const k = 200 // Optimal distance
       const iterations = 60
       
-      const layoutNodes = nodes.map(n => ({
+      const layoutNodes = currentNodes.map(n => ({
         id: n.id,
         x: n.position.x || Math.random() * 800,
         y: n.position.y || Math.random() * 600,
@@ -378,7 +393,7 @@ export default function Topology() {
         }
 
         // 2. Attractive forces (connected pairs)
-        edges.forEach(edge => {
+        currentEdges.forEach(edge => {
           const source = nodeMap.get(edge.source)
           const target = nodeMap.get(edge.target)
           if (source && target) {
@@ -421,7 +436,7 @@ export default function Topology() {
         })
       }
 
-      updatedNodes = nodes.map(node => {
+      updatedNodes = currentNodes.map(node => {
         const layoutNode = nodeMap.get(node.id)
         return {
           ...node,
@@ -437,15 +452,17 @@ export default function Topology() {
       setNodes(updatedNodes)
       
       // Save updated coordinates in database
-      try {
-        const positions = updatedNodes.map(n => ({
-          id: parseInt(n.id),
-          x: n.position.x,
-          y: n.position.y
-        }))
-        await (api.nodes as any).updatePositions(positions)
-      } catch (err) {
-        console.error('Failed to save auto-layout positions:', err)
+      if (isAdmin) {
+        try {
+          const positions = updatedNodes.map(n => ({
+            id: parseInt(n.id),
+            x: n.position.x,
+            y: n.position.y
+          }))
+          await (api.nodes as any).updatePositions(positions)
+        } catch (err) {
+          console.error('Failed to save auto-layout positions:', err)
+        }
       }
     }
   }
@@ -455,12 +472,85 @@ export default function Topology() {
   useEffect(() => {
     const handler = (data: any) => {
       setNodes((nds) => nds.map((n) =>
-        n.id === String(data.nodeId) ? { ...n, data: { ...n.data, status: data.status } } : n
+        n.id === String(data.nodeId)
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                status: data.status,
+                latencyMs: data.latencyMs,
+                packetLoss: data.packetLoss,
+              },
+            }
+          : n
       ))
     }
     socket.on('node:status', handler)
     return () => { socket.off('node:status', handler) }
   }, [])
+
+  useEffect(() => {
+    if (nodes.length > 0 && edges.length > 0) {
+      setEdges((eds) => {
+        const nodeMap = new Map(nodes.map(n => [n.id, n]))
+        let changed = false
+        const nextEds = eds.map(edge => {
+          const sourceNode = nodeMap.get(edge.source)
+          const targetNode = nodeMap.get(edge.target)
+
+          if (!sourceNode || !targetNode) return edge
+
+          const sourceStatus = sourceNode.data.status || 'unknown'
+          const targetStatus = targetNode.data.status || 'unknown'
+          const latency = (targetNode.data.latencyMs as number) || 0
+          const loss = (targetNode.data.packetLoss as number) || 0
+
+          let stroke = '#22c55e' // Green (Up)
+          let animated = true
+          let strokeDasharray = undefined
+          let label = ''
+
+          if (sourceStatus === 'down' || targetStatus === 'down') {
+            stroke = '#ef4444' // Red (Down)
+            animated = false
+            strokeDasharray = '5,5'
+            label = 'OFFLINE'
+          } else if (sourceStatus === 'warning' || targetStatus === 'warning') {
+            stroke = '#f59e0b' // Amber (Warning)
+            animated = true
+            label = `${Math.round(latency)}ms (${Math.round(loss)}% loss)`
+          } else if (sourceStatus === 'maintenance' || targetStatus === 'maintenance') {
+            stroke = '#a855f7' // Purple (Maintenance)
+            animated = true
+            strokeDasharray = '3,3'
+            label = 'MAINT'
+          } else {
+            label = `${latency.toFixed(1)} ms`
+          }
+
+          if (edge.label !== label || edge.style?.stroke !== stroke || edge.animated !== animated) {
+            changed = true
+            return {
+              ...edge,
+              animated,
+              label,
+              labelStyle: { fill: stroke, fontWeight: 700, fontSize: 9 },
+              labelBgStyle: { fill: '#18181b', fillOpacity: 0.85, rx: 6, ry: 6 },
+              labelBgPadding: [6, 4] as [number, number],
+              style: {
+                stroke,
+                strokeWidth: 2.5,
+                strokeDasharray,
+                transition: 'stroke 0.3s, stroke-width 0.3s'
+              }
+            }
+          }
+          return edge
+        })
+        return changed ? nextEds : eds
+      })
+    }
+  }, [nodes])
 
   const onConnect = useCallback(async (params: Connection) => {
     if (!isAdmin || !params.source || !params.target) return

@@ -39,7 +39,12 @@ router.get('/', async (req: Request, res: Response) => {
 
 // Dashboard summary
 router.get('/summary', async (req: Request, res: Response) => {
-  const [totalSites, totalNodes, onlineNodes, maintenanceNodes, activeAlarms, recentEvents] = await Promise.all([
+  const now = new Date()
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(now.getDate() - 7)
+  const totalPeriodSeconds = 7 * 24 * 3600
+
+  const [totalSites, totalNodes, onlineNodes, maintenanceNodes, activeAlarms, recentEvents, allNodes, allAlarms] = await Promise.all([
     prisma.site.count(),
     prisma.node.count(),
     prisma.node.count({ where: { status: 'up' } }),
@@ -50,7 +55,60 @@ router.get('/summary', async (req: Request, res: Response) => {
       take: 10,
       include: { node: { select: { name: true, deviceType: true } } },
     }),
+    prisma.node.findMany({
+      select: {
+        id: true,
+        name: true,
+        ipAddress: true,
+        deviceType: true,
+        status: true,
+        latencyMs: true,
+        packetLoss: true,
+      },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.alarm.findMany({
+      where: {
+        startTime: { lte: now },
+        OR: [
+          { endTime: { gte: sevenDaysAgo } },
+          { endTime: null },
+        ],
+      },
+    }),
   ])
+
+  // Group alarms by nodeId in memory
+  const alarmsByNode: Record<number, typeof allAlarms> = {}
+  allAlarms.forEach((alarm) => {
+    if (!alarmsByNode[alarm.nodeId]) {
+      alarmsByNode[alarm.nodeId] = []
+    }
+    alarmsByNode[alarm.nodeId].push(alarm)
+  })
+
+  // Calculate availability for each node
+  const nodesStats = allNodes.map((node) => {
+    const nodeAlarms = alarmsByNode[node.id] || []
+    let downtimeSeconds = 0
+
+    nodeAlarms.forEach((alarm) => {
+      const alarmStart = Math.max(new Date(alarm.startTime).getTime(), sevenDaysAgo.getTime())
+      const alarmEnd = Math.min((alarm.endTime ? new Date(alarm.endTime) : now).getTime(), now.getTime())
+      const overlap = (alarmEnd - alarmStart) / 1000
+      if (overlap > 0) {
+        downtimeSeconds += overlap
+      }
+    })
+
+    const availability = Math.max(0, Math.min(100, ((totalPeriodSeconds - downtimeSeconds) / totalPeriodSeconds) * 100))
+
+    return {
+      ...node,
+      availability: Math.round(availability * 100) / 100,
+      downtimeSeconds,
+    }
+  })
 
   res.json({
     totalSites,
@@ -60,6 +118,7 @@ router.get('/summary', async (req: Request, res: Response) => {
     offlineNodes: totalNodes - onlineNodes - maintenanceNodes,
     activeAlarms,
     recentEvents,
+    nodesStats,
   })
 })
 

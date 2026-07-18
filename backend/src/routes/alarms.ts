@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
 import { authMiddleware } from '../middleware/auth'
+import { logAudit } from '../lib/audit'
 
 const router = Router()
 
@@ -41,7 +42,7 @@ router.put('/:id/resolve', async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const { recoveryNote, cause } = req.body
 
-  const alarm = await prisma.alarm.findUnique({ where: { id } })
+  const alarm = await prisma.alarm.findUnique({ where: { id }, include: { node: true } })
   if (!alarm) { res.status(404).json({ error: 'Alarm not found' }); return }
 
   const endTime = new Date()
@@ -51,6 +52,16 @@ router.put('/:id/resolve', async (req: Request, res: Response) => {
     where: { id },
     data: { status: 'resolved', endTime, duration, recoveryNote, cause },
   })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'ALARM_RESOLVE',
+    target: `Alarm #${alarm.id} (${alarm.node.name})`,
+    details: `Resolution note: ${recoveryNote || '-'}. Cause: ${cause || '-'}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json(updated)
 })
 
@@ -58,13 +69,23 @@ router.put('/:id/note', async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const { recoveryNote, cause } = req.body
 
-  const alarm = await prisma.alarm.findUnique({ where: { id } })
+  const alarm = await prisma.alarm.findUnique({ where: { id }, include: { node: true } })
   if (!alarm) { res.status(404).json({ error: 'Alarm not found' }); return }
 
   const updated = await prisma.alarm.update({
     where: { id },
     data: { recoveryNote, cause },
   })
+
+  logAudit({
+    userId: req.user?.userId,
+    username: req.user?.username || 'System',
+    action: 'ALARM_NOTE_UPDATE',
+    target: `Alarm #${alarm.id} (${alarm.node.name})`,
+    details: `New note: ${recoveryNote || '-'}. Cause: ${cause || '-'}`,
+    ipAddress: req.ip
+  }).catch(console.error)
+
   res.json(updated)
 })
 

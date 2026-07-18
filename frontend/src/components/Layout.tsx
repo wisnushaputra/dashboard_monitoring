@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
-  LayoutDashboard, Network, Bell, History, LogOut, Menu, Moon, Sun, Volume2, VolumeX, Users, X, AlertTriangle, Settings, Upload, Play, FileBarChart
+  LayoutDashboard, Network, Bell, History, LogOut, Menu, Moon, Sun, Volume2, VolumeX, Users, X, AlertTriangle, Settings, Upload, Play, FileBarChart, Wrench, ShieldAlert
 } from 'lucide-react'
 import socket from '../lib/socket'
 import { api } from '../lib/api'
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/alarms', icon: Bell, label: 'Alarms' },
   { to: '/history', icon: History, label: 'History' },
   { to: '/reports', icon: FileBarChart, label: 'Reports' },
+  { to: '/maintenance', icon: Wrench, label: 'Maintenance' },
 ]
 
 function playAlarmSound() {
@@ -153,20 +154,36 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </NavLink>
           ))}
           {user?.role === 'admin' && (
-            <NavLink
-              to="/users"
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive
-                    ? dark ? 'bg-zinc-700 text-white' : 'bg-zinc-100 text-zinc-900'
-                    : dark ? 'text-zinc-400 hover:text-white hover:bg-zinc-700' : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100'
-                }`
-              }
-            >
-              <Users className="w-4 h-4" />
-              Users
-            </NavLink>
+            <>
+              <NavLink
+                to="/users"
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    isActive
+                      ? dark ? 'bg-zinc-700 text-white' : 'bg-zinc-100 text-zinc-900'
+                      : dark ? 'text-zinc-400 hover:text-white hover:bg-zinc-700' : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100'
+                  }`
+                }
+              >
+                <Users className="w-4 h-4" />
+                Users
+              </NavLink>
+              <NavLink
+                to="/audit-logs"
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    isActive
+                      ? dark ? 'bg-zinc-700 text-white' : 'bg-zinc-100 text-zinc-900'
+                      : dark ? 'text-zinc-400 hover:text-white hover:bg-zinc-700' : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100'
+                  }`
+                }
+              >
+                <ShieldAlert className="w-4 h-4" />
+                Audit Logs
+              </NavLink>
+            </>
           )}
         </nav>
 
