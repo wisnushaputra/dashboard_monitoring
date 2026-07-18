@@ -119,6 +119,7 @@ export default function Alarms() {
               <th className="text-left px-4 py-2">Status</th>
               <th className="text-left px-4 py-2">Start</th>
               <th className="text-left px-4 py-2">Duration</th>
+              <th className="text-left px-4 py-2">Cause</th>
               <th className="text-left px-4 py-2">Note</th>
               {user?.role !== 'viewer' && <th className="text-left px-4 py-2">Action</th>}
             </tr>
@@ -136,6 +137,17 @@ export default function Alarms() {
                 </td>
                 <td className="px-4 py-2 text-zinc-400">{new Date(a.startTime).toLocaleString('id-ID')}</td>
                 <td className="px-4 py-2 text-zinc-500">{a.duration ? `${a.duration}s` : '-'}</td>
+                <td className="px-4 py-2 text-zinc-500 max-w-[200px] truncate" title={a.cause || 'Primary Outage'}>
+                  {a.cause ? (
+                    <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/30 font-medium">
+                      {a.cause}
+                    </span>
+                  ) : (
+                    <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-zinc-50 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 border dark:border-zinc-700 font-medium">
+                      Primary Outage
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-zinc-400 max-w-[200px] truncate">{a.recoveryNote || '-'}</td>
                 {user?.role !== 'viewer' && (
                   <td className="px-4 py-2">
@@ -154,7 +166,7 @@ export default function Alarms() {
                 )}
               </tr>
             ))}
-            {alarms.length === 0 && <tr><td colSpan={user?.role !== 'viewer' ? 8 : 7} className="text-center py-6 text-zinc-400">No alarms</td></tr>}
+            {alarms.length === 0 && <tr><td colSpan={user?.role !== 'viewer' ? 9 : 8} className="text-center py-6 text-zinc-400">No alarms</td></tr>}
           </tbody>
         </table>
       </div>

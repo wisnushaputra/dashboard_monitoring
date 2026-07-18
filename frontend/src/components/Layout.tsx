@@ -84,6 +84,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const handleAlarmCreated = async (alarm: any) => {
+      if (alarm.cause && alarm.cause.startsWith('Suppressed')) {
+        return // Suppress sound and alert notification overlays for child node outages
+      }
       if (alarmSoundRef.current) {
         playAlarmSound()
       }

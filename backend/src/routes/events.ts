@@ -110,6 +110,123 @@ router.get('/summary', async (req: Request, res: Response) => {
     }
   })
 
+  // Calculate 24-hour incident trend (Down & Warning Alert Counts)
+  const incidentTrend: Array<{ timestamp: number; hour: string; down: number; warning: number }> = []
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 60 * 60 * 1000)
+    d.setMinutes(0, 0, 0)
+    const hourLabel = `${String(d.getHours()).padStart(2, '0')}:00`
+    incidentTrend.push({
+      timestamp: d.getTime(),
+      hour: hourLabel,
+      down: 0,
+      warning: 0
+    })
+  }
+
+  const trendStartTime = incidentTrend[0].timestamp
+  const recentEventLogs = await prisma.eventLog.findMany({
+    where: {
+      timestamp: { gte: new Date(trendStartTime) },
+      eventType: { in: ['down', 'warning'] }
+    },
+    select: {
+      timestamp: true,
+      eventType: true
+    }
+  })
+
+  recentEventLogs.forEach(log => {
+    const logMs = new Date(log.timestamp).getTime()
+    const hourMs = 60 * 60 * 1000
+    const index = Math.floor((logMs - trendStartTime) / hourMs)
+    if (index >= 0 && index < 24) {
+      if (log.eventType === 'down') {
+        incidentTrend[index].down++
+      } else if (log.eventType === 'warning') {
+        incidentTrend[index].warning++
+      }
+    }
+  })
+
+  // Calculate Customer SLA Leaderboard (Last 30 Days)
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+  const total30DaysSeconds = 30 * 24 * 3600
+
+  // Fetch all customers with their nodes
+  const allCustomers = await prisma.customer.findMany({
+    include: {
+      nodes: {
+        select: {
+          id: true,
+          enabled: true
+        }
+      }
+    }
+  })
+
+  // Fetch all alarms in the last 30 days
+  const alarms30Days = await prisma.alarm.findMany({
+    where: {
+      startTime: { lte: now },
+      OR: [
+        { endTime: { gte: thirtyDaysAgo } },
+        { endTime: null }
+      ]
+    }
+  })
+
+  // Group alarms by nodeId in memory
+  const alarmsByNode30Days: Record<number, typeof alarms30Days> = {}
+  alarms30Days.forEach(alarm => {
+    if (!alarmsByNode30Days[alarm.nodeId]) {
+      alarmsByNode30Days[alarm.nodeId] = []
+    }
+    alarmsByNode30Days[alarm.nodeId].push(alarm)
+  })
+
+  // Compute availability for each customer
+  const customerSla = allCustomers.map(cust => {
+    const activeNodes = cust.nodes.filter(n => n.enabled)
+    if (activeNodes.length === 0) {
+      return {
+        id: cust.id,
+        name: cust.name,
+        code: cust.code,
+        sla: 100
+      }
+    }
+
+    let totalSlaSum = 0
+    activeNodes.forEach(node => {
+      const nodeAlarms = alarmsByNode30Days[node.id] || []
+      let downtimeSeconds = 0
+
+      nodeAlarms.forEach(alarm => {
+        const alarmStart = Math.max(new Date(alarm.startTime).getTime(), thirtyDaysAgo.getTime())
+        const alarmEnd = Math.min((alarm.endTime ? new Date(alarm.endTime) : now).getTime(), now.getTime())
+        const overlap = (alarmEnd - alarmStart) / 1000
+        if (overlap > 0) {
+          downtimeSeconds += overlap
+        }
+      })
+
+      const availability = Math.max(0, Math.min(100, ((total30DaysSeconds - downtimeSeconds) / total30DaysSeconds) * 100))
+      totalSlaSum += availability
+    })
+
+    const avgSla = totalSlaSum / activeNodes.length
+    return {
+      id: cust.id,
+      name: cust.name,
+      code: cust.code,
+      sla: Math.round(avgSla * 100) / 100
+    }
+  })
+
+  // Sort customerSla descending by SLA to show a leaderboard
+  customerSla.sort((a, b) => b.sla - a.sla)
+
   res.json({
     totalSites,
     totalNodes,
@@ -119,6 +236,8 @@ router.get('/summary', async (req: Request, res: Response) => {
     activeAlarms,
     recentEvents,
     nodesStats,
+    incidentTrend,
+    customerSla,
   })
 })
 

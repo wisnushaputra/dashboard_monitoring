@@ -28,7 +28,7 @@ npm run dev              # http://localhost:4000
 # 3. Frontend (separate terminal)
 cd frontend
 npm install
-npm run dev              # http://localhost:3000
+npm run dev              # http://localhost:3000 (or http://localhost:3002 if 3000 is occupied)
 ```
 
 ## Default Users
@@ -81,18 +81,26 @@ frontend/
 
 ```bash
 docker compose up --build -d
-# Frontend: http://localhost:3000
+# Frontend: http://localhost:3000 (or http://localhost:3002 if port 3000 is occupied)
 # Backend API: http://localhost:4000
 ```
 
 ## Features
 
-- **Dashboard** — real-time summary cards + recent events (WebSocket auto-update)
-- **Topology Editor** — drag-and-drop network map with React-Flow, status colors, device palette
-- **ICMP Monitoring** — background ping worker with configurable intervals, threshold detection, packet loss logging
-- **Alarm Management** — paginated log with search, filters, resolve workflow
-- **History & Charts** — latency timeline, downtime Gantt, availability stats
-- **Export** — XLSX, CSV, PDF with applied filters
-- **Notifications** — email webhook + Slack integration
-- **Dark/Light Mode** — persistent user preference
-- **RBAC** — Admin, Operator, Viewer roles
+- **Dashboard** — real-time summary cards, recent events feed, and WebSocket auto-updates.
+- **Latency Heatmap Grid** — compact visual overview of all nodes' status colored dynamically by latency thresholds (Low, Warning, High, Down).
+- **24-Hour Alarm Trend** — area trend chart highlighting Warning and Down alarms over the last 24 hours.
+- **Customer SLA Leaderboard** — real-time contract compliance tracking of all corporate customers over 30 days.
+- **Topology Editor** — drag-and-drop network map with React-Flow canvas, status colors, and device palette.
+- **POP/Network Nested Maps** — recursive self-relations for parent POP network nodes, enabling double-click drill-downs.
+- **Topology Search & Auto-Focus** — instant search box with visual opacity fading and smooth viewport panning.
+- **Connection Link Quality** — color-coded links (Emerald Green, Amber, Red dashed) representing live connection status.
+- **RCA & Alarm Suppression** — suppress down alarms on child nodes if the parent POP is Down, preventing alarm storms.
+- **ICMP Monitoring** — background ping worker with configurable intervals, custom threshold rules, and status triggers.
+- **Maintenance Windows** — schedule offline maintenance times per node to temporarily bypass alerts and notifications.
+- **Audit Logs** — full audit trail of system configuration changes (Admin only).
+- **MTTR Analytics Reports** — Mean Time To Resolve analytics with daily trend charts, device type charts, and PDF/Excel downloads.
+- **SLA PDF & Excel Exports** — download compiled reports containing availability compliance and downtime details.
+- **Notifications** — email webhooks and Slack channel alarm logging integrations.
+- **Dark/Light Mode** — system-wide theme customization with persistent memory.
+- **RBAC** — Admin, Operator, and Viewer roles.

@@ -145,6 +145,138 @@ router.get('/sla/preview', authMiddleware, async (req: Request, res: Response) =
   }
 })
 
+// Get MTTR Analytics Report
+router.get('/mttr', authMiddleware, async (req: Request, res: Response) => {
+  const { startDate, endDate } = req.query
+
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: 'startDate and endDate are required' })
+    return
+  }
+
+  try {
+    const start = new Date(startDate as string)
+    start.setUTCHours(0, 0, 0, 0)
+    const end = new Date(endDate as string)
+    end.setUTCHours(23, 59, 59, 999)
+
+    // 1. Fetch resolved alarms within range
+    const resolvedAlarms = await prisma.alarm.findMany({
+      where: {
+        status: 'resolved',
+        endTime: { gte: start, lte: end }
+      },
+      include: {
+        node: {
+          select: {
+            name: true,
+            ipAddress: true,
+            deviceType: true
+          }
+        }
+      },
+      orderBy: { endTime: 'desc' }
+    })
+
+    // 2. Compute MTTR (mean duration in seconds)
+    const totalResolved = resolvedAlarms.length
+    let totalDurationSeconds = 0
+    let mttrSeconds = 0
+
+    resolvedAlarms.forEach(alarm => {
+      const duration = alarm.duration || (alarm.endTime 
+        ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        : 0)
+      totalDurationSeconds += duration
+    })
+
+    if (totalResolved > 0) {
+      mttrSeconds = Math.round(totalDurationSeconds / totalResolved)
+    }
+
+    // 3. Compute MTTR grouped by device type
+    const durationByDeviceType: Record<string, { totalDuration: number; count: number }> = {}
+    resolvedAlarms.forEach(alarm => {
+      const deviceType = alarm.node?.deviceType || 'unknown'
+      const duration = alarm.duration || (alarm.endTime 
+        ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        : 0)
+
+      if (!durationByDeviceType[deviceType]) {
+        durationByDeviceType[deviceType] = { totalDuration: 0, count: 0 }
+      }
+      durationByDeviceType[deviceType].totalDuration += duration
+      durationByDeviceType[deviceType].count += 1
+    })
+
+    const mttrByDeviceType = Object.entries(durationByDeviceType).map(([type, stats]) => ({
+      deviceType: type,
+      mttrSeconds: Math.round(stats.totalDuration / stats.count),
+      count: stats.count
+    }))
+
+    // 4. Incident resolution trend: group by day of endTime
+    const dailyStats: Record<string, { totalDuration: number; count: number }> = {}
+    // Pre-populate all days in range to avoid gaps
+    const temp = new Date(start)
+    while (temp <= end) {
+      const dayKey = temp.toISOString().split('T')[0]
+      dailyStats[dayKey] = { totalDuration: 0, count: 0 }
+      temp.setDate(temp.getDate() + 1)
+    }
+
+    resolvedAlarms.forEach(alarm => {
+      if (alarm.endTime) {
+        const dayKey = new Date(alarm.endTime).toISOString().split('T')[0]
+        const duration = alarm.duration || Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        if (dailyStats[dayKey]) {
+          dailyStats[dayKey].totalDuration += duration
+          dailyStats[dayKey].count += 1
+        }
+      }
+    })
+
+    const resolutionTrend = Object.entries(dailyStats).map(([date, stats]) => ({
+      date,
+      count: stats.count,
+      mttrMinutes: stats.count > 0 ? Math.round((stats.totalDuration / stats.count) / 60) : 0
+    })).sort((a, b) => a.date.localeCompare(b.date))
+
+    // 5. Top 5 longest outages resolved
+    const topOutages = [...resolvedAlarms]
+      .map(alarm => {
+        const duration = alarm.duration || (alarm.endTime 
+          ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+          : 0)
+        return {
+          id: alarm.id,
+          nodeName: alarm.node?.name || 'N/A',
+          ipAddress: alarm.node?.ipAddress || 'N/A',
+          startTime: alarm.startTime,
+          endTime: alarm.endTime,
+          duration,
+          recoveryNote: alarm.recoveryNote,
+          cause: alarm.cause
+        }
+      })
+      .sort((a, b) => b.duration - a.duration)
+      .slice(0, 5)
+
+    res.json({
+      summary: {
+        totalResolved,
+        mttrSeconds,
+        mttrFormatted: formatDowntime(mttrSeconds),
+      },
+      mttrByDeviceType,
+      resolutionTrend,
+      topOutages
+    })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Stream SLA PDF Report (Cleaner, with separate page breakdown per node!)
 router.get('/sla/pdf', authMiddleware, async (req: Request, res: Response) => {
   const customerId = parseInt(req.query.customerId as string)
@@ -477,6 +609,257 @@ router.get('/sla/xlsx', authMiddleware, async (req: Request, res: Response) => {
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename=sla_report_${stats.customer.code}.xlsx`)
+    await wb.xlsx.write(res)
+    res.end()
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Stream MTTR PDF Report
+router.get('/mttr/pdf', authMiddleware, async (req: Request, res: Response) => {
+  const { startDate, endDate } = req.query
+
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: 'startDate and endDate are required' })
+    return
+  }
+
+  try {
+    const start = new Date(startDate as string)
+    start.setUTCHours(0, 0, 0, 0)
+    const end = new Date(endDate as string)
+    end.setUTCHours(23, 59, 59, 999)
+
+    // 1. Fetch resolved alarms within range
+    const resolvedAlarms = await prisma.alarm.findMany({
+      where: {
+        status: 'resolved',
+        endTime: { gte: start, lte: end }
+      },
+      include: {
+        node: {
+          select: {
+            name: true,
+            ipAddress: true,
+            deviceType: true
+          }
+        }
+      },
+      orderBy: { endTime: 'desc' }
+    })
+
+    const totalResolved = resolvedAlarms.length
+    let totalDurationSeconds = 0
+    let mttrSeconds = 0
+
+    resolvedAlarms.forEach(alarm => {
+      const duration = alarm.duration || (alarm.endTime 
+        ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        : 0)
+      totalDurationSeconds += duration
+    })
+
+    if (totalResolved > 0) {
+      mttrSeconds = Math.round(totalDurationSeconds / totalResolved)
+    }
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4' })
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename=mttr_report_${startDate}_to_${endDate}.pdf`)
+    doc.pipe(res)
+
+    const primaryColor = '#0f172a' // slate-900
+    const accentColor = '#6366f1' // indigo-500
+    const borderCol = '#cbd5e1'
+    const textMuted = '#64748b'
+
+    doc.rect(0, 0, 595.28, 12).fill(accentColor)
+
+    // Title
+    doc.fillColor(primaryColor).fontSize(20).font('Helvetica-Bold').text('NOC INCIDENT RESPONSE (MTTR) REPORT', 40, 45)
+    doc.fillColor(textMuted).fontSize(8.5).font('Helvetica').text('INCIDENT RESPONSE SPEED & OUTAGE ANALYTICS', 40, 68)
+    
+    doc.strokeColor(borderCol).lineWidth(0.5).moveTo(40, 85).lineTo(555.28, 85).stroke()
+
+    // Period Details
+    doc.fillColor(primaryColor).fontSize(10).font('Helvetica-Bold').text('Analysis Period:', 40, 105)
+    doc.font('Helvetica').text(`Start Date: ${new Date(startDate as string).toLocaleDateString('id-ID')}`, 40, 120)
+    doc.text(`End Date: ${new Date(endDate as string).toLocaleDateString('id-ID')}`, 40, 135)
+
+    doc.font('Helvetica-Bold').text('Metrics Summary:', 300, 105)
+    doc.font('Helvetica').text(`Total Incidents Resolved: ${totalResolved}`, 300, 120)
+    doc.text(`Mean Time to Resolve (MTTR): ${formatDowntime(mttrSeconds)}`, 300, 135)
+
+    // Divider
+    doc.strokeColor(borderCol).lineWidth(0.5).moveTo(40, 160).lineTo(555.28, 160).stroke()
+
+    // Table Header
+    doc.fillColor(primaryColor).fontSize(12).font('Helvetica-Bold').text('Top 10 Longest Resolved Outages', 40, 180)
+    
+    let tableY = 205
+    doc.rect(40, tableY, 515.28, 20).fill('#f1f5f9')
+    doc.fillColor(primaryColor).fontSize(8).font('Helvetica-Bold')
+    doc.text('NODE / IP', 45, tableY + 6)
+    doc.text('OUTAGE CAUSE', 180, tableY + 6)
+    doc.text('OUTAGE PERIOD', 350, tableY + 6)
+    doc.text('DURATION', 500, tableY + 6)
+
+    tableY += 20
+    const topAlarms = [...resolvedAlarms]
+      .sort((a, b) => {
+        const da = a.duration || 0
+        const db = b.duration || 0
+        return db - da
+      })
+      .slice(0, 10)
+
+    doc.font('Helvetica').fontSize(7.5)
+    topAlarms.forEach((alarm) => {
+      if (tableY > 750) {
+        doc.addPage()
+        doc.rect(0, 0, 595.28, 12).fill(accentColor)
+        tableY = 40
+      }
+      
+      const duration = alarm.duration || (alarm.endTime 
+        ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        : 0)
+      
+      doc.fillColor(primaryColor)
+      doc.text(alarm.node?.name || 'N/A', 45, tableY + 6)
+      doc.fillColor(textMuted)
+      doc.text(alarm.node?.ipAddress || 'N/A', 45, tableY + 15)
+
+      doc.fillColor(primaryColor)
+      doc.text(alarm.cause || 'Unknown Outage', 180, tableY + 6, { width: 160 })
+      if (alarm.recoveryNote) {
+        doc.fillColor('#10b981')
+        doc.text(`Note: ${alarm.recoveryNote}`, 180, tableY + 18, { width: 160 })
+      }
+
+      doc.fillColor(primaryColor)
+      doc.text(`Start: ${formatDate(alarm.startTime)}`, 350, tableY + 6)
+      doc.text(`End: ${formatDate(alarm.endTime)}`, 350, tableY + 15)
+
+      doc.font('Helvetica-Bold').text(formatDowntime(duration), 500, tableY + 6)
+      doc.font('Helvetica')
+
+      doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(40, tableY + 28).lineTo(555.28, tableY + 28).stroke()
+      tableY += 30
+    })
+
+    if (topAlarms.length === 0) {
+      doc.text('No outages recorded in this period.', 45, tableY + 10)
+    }
+
+    doc.end()
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Stream MTTR Excel Report
+router.get('/mttr/xlsx', authMiddleware, async (req: Request, res: Response) => {
+  const { startDate, endDate } = req.query
+
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: 'startDate and endDate are required' })
+    return
+  }
+
+  try {
+    const start = new Date(startDate as string)
+    start.setUTCHours(0, 0, 0, 0)
+    const end = new Date(endDate as string)
+    end.setUTCHours(23, 59, 59, 999)
+
+    // 1. Fetch resolved alarms within range
+    const resolvedAlarms = await prisma.alarm.findMany({
+      where: {
+        status: 'resolved',
+        endTime: { gte: start, lte: end }
+      },
+      include: {
+        node: {
+          select: {
+            name: true,
+            ipAddress: true,
+            deviceType: true
+          }
+        }
+      },
+      orderBy: { endTime: 'desc' }
+    })
+
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('MTTR Summary')
+
+    ws.mergeCells('A1:E1')
+    ws.getCell('A1').value = 'NOC MONITORING - INCIDENT RESOLUTION (MTTR) REPORT'
+    ws.getCell('A1').font = { bold: true, size: 14 }
+    
+    ws.addRow(['Start Date', startDate])
+    ws.addRow(['End Date', endDate])
+    ws.addRow(['Export Date', new Date().toLocaleDateString('id-ID')])
+    ws.addRow([])
+
+    ws.addRow(['Summary Metrics'])
+    const metricsHeader = ws.getRow(6)
+    metricsHeader.font = { bold: true }
+
+    ws.addRow(['Total Incidents Resolved', resolvedAlarms.length])
+    
+    let totalDurationSeconds = 0
+    let mttrSeconds = 0
+    resolvedAlarms.forEach(alarm => {
+      const duration = alarm.duration || (alarm.endTime 
+        ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        : 0)
+      totalDurationSeconds += duration
+    })
+    if (resolvedAlarms.length > 0) {
+      mttrSeconds = Math.round(totalDurationSeconds / resolvedAlarms.length)
+    }
+
+    ws.addRow(['Mean Time to Resolve (MTTR)', formatDowntime(mttrSeconds)])
+    ws.addRow([])
+
+    ws.addRow(['Resolved Outage Details'])
+    const tblHeader = ws.getRow(11)
+    tblHeader.font = { bold: true }
+    tblHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCBD5E1' } }
+
+    ws.addRow(['Alarm ID', 'Node Name', 'IP Address', 'Device Type', 'Start Time', 'End Time', 'Duration (s)', 'Outage Cause', 'Recovery Note'])
+    
+    resolvedAlarms.forEach(alarm => {
+      const duration = alarm.duration || (alarm.endTime 
+        ? Math.floor((alarm.endTime.getTime() - alarm.startTime.getTime()) / 1000)
+        : 0)
+      ws.addRow([
+        alarm.id,
+        alarm.node?.name || 'N/A',
+        alarm.node?.ipAddress || 'N/A',
+        alarm.node?.deviceType || 'N/A',
+        formatDate(alarm.startTime),
+        formatDate(alarm.endTime),
+        duration,
+        alarm.cause || 'Primary Outage',
+        alarm.recoveryNote || '-'
+      ])
+    })
+
+    ws.columns.forEach(column => {
+      let maxLen = 0
+      column.eachCell!({ includeEmpty: true }, cell => {
+        const valStr = cell.value ? cell.value.toString() : ''
+        if (valStr.length > maxLen) maxLen = valStr.length
+      })
+      column.width = Math.max(maxLen + 2, 15)
+    })
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename=mttr_report_${startDate}_to_${endDate}.xlsx`)
     await wb.xlsx.write(res)
     res.end()
   } catch (err: any) {

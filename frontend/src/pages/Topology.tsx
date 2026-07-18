@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, useRef } from 'react'
 import {
   ReactFlow, addEdge, Background, Controls, MiniMap,
   useNodesState, useEdgesState, type Connection, type Node, type Edge,
-  MarkerType, Handle, Position
+  MarkerType, Handle, Position, ReactFlowProvider, useReactFlow
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '../lib/api'
@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   X, Router as RouterIcon, Network as SwitchIcon, Shield as FirewallIcon,
   Server as ServerIcon, Radio as ApIcon, Signal as ModemIcon, Zap as UpsIcon,
-  Globe as OltIcon, HelpCircle
+  Globe as OltIcon, HelpCircle, Folders as PopIcon, Download, Upload, Search
 } from 'lucide-react'
 
 const nodeTypeColors: Record<string, { bg: string; label: string }> = {
@@ -23,6 +23,7 @@ const nodeTypeColors: Record<string, { bg: string; label: string }> = {
   ap: { bg: '#10b981', label: 'AP' },
   modem: { bg: '#64748b', label: 'Modem' },
   ups: { bg: '#14b8a6', label: 'UPS' },
+  pop: { bg: '#ec4899', label: 'POP / Network' },
 }
 
 const deviceTypes = Object.keys(nodeTypeColors)
@@ -36,6 +37,7 @@ const deviceIcons: Record<string, any> = {
   ap: ApIcon,
   modem: ModemIcon,
   ups: UpsIcon,
+  pop: PopIcon,
 }
 
 function StatusNode({ data }: { data: any }) {
@@ -129,11 +131,15 @@ function NodePalette({ onAdd }: { onAdd: (type: string) => void }) {
   )
 }
 
-export default function Topology() {
+function TopologyInner() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [currentParent, setCurrentParent] = useState<any>(null)
+  const [parentStack, setParentStack] = useState<any[]>([])
+  const { setCenter } = useReactFlow()
+  const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [editNode, setEditNode] = useState<any>(null)
   const [showModal, setShowModal] = useState(false)
@@ -270,7 +276,7 @@ export default function Topology() {
   const loadNodes = useCallback(async () => {
     try {
       const [nodesData, connectionsData] = await Promise.all([
-        api.nodes.list(),
+        api.nodes.list({ parentId: currentParent ? String(currentParent.id) : 'null' }),
         api.connections.list(),
       ])
 
@@ -296,14 +302,58 @@ export default function Topology() {
       })
       setNodes(flowNodes)
 
-      const flowEdges: Edge[] = connectionsData.map((c: any) => ({
-        id: String(c.id),
-        source: String(c.fromNodeId),
-        target: String(c.toNodeId),
-        sourceHandle: c.sourceHandle,
-        targetHandle: c.targetHandle,
-        markerEnd: { type: MarkerType.ArrowClosed },
-      }))
+      const flowEdges: Edge[] = connectionsData
+        .filter((c: any) => {
+          return flowNodes.some((fn) => fn.id === String(c.fromNodeId)) &&
+                 flowNodes.some((fn) => fn.id === String(c.toNodeId))
+        })
+        .map((c: any) => {
+          const sourceNode = flowNodes.find((fn) => fn.id === String(c.fromNodeId))
+          const targetNode = flowNodes.find((fn) => fn.id === String(c.toNodeId))
+
+          const sourceStatus = sourceNode?.data?.status || 'unknown'
+          const targetStatus = targetNode?.data?.status || 'unknown'
+
+          let strokeColor = '#cbd5e1' // default gray
+          let isAnimated = false
+          let strokeDash = undefined
+          let strokeWidth = 1.5
+
+          if (sourceStatus === 'down' || targetStatus === 'down') {
+            strokeColor = '#ef4444' // red for down links
+            strokeDash = '5,5'
+            strokeWidth = 2
+          } else if (sourceStatus === 'warning' || targetStatus === 'warning') {
+            strokeColor = '#f59e0b' // warning orange
+            isAnimated = true
+            strokeWidth = 2
+          } else if (sourceStatus === 'maintenance' || targetStatus === 'maintenance') {
+            strokeColor = '#a855f7' // purple for maintenance
+            strokeDash = '3,3'
+          } else if (sourceStatus === 'up' && targetStatus === 'up') {
+            strokeColor = '#10b981' // healthy green
+            isAnimated = true
+          }
+
+          return {
+            id: String(c.id),
+            source: String(c.fromNodeId),
+            target: String(c.toNodeId),
+            sourceHandle: c.sourceHandle,
+            targetHandle: c.targetHandle,
+            animated: isAnimated,
+            style: {
+              stroke: strokeColor,
+              strokeWidth: strokeWidth,
+              strokeDasharray: strokeDash,
+              transition: 'stroke 0.3s, stroke-width 0.3s',
+            },
+            markerEnd: { 
+              type: MarkerType.ArrowClosed,
+              color: strokeColor,
+            },
+          }
+        })
       setEdges(flowEdges)
 
       if (needsLayout && flowNodes.length > 0) {
@@ -313,7 +363,7 @@ export default function Topology() {
         }, 100)
       }
     } catch { } finally { setLoading(false) }
-  }, [isAdmin])
+  }, [isAdmin, currentParent])
 
   const handleLayout = async (type: 'grid' | 'circular' | 'force', nodesToLayout?: Node[], edgesToLayout?: Edge[]) => {
     const currentNodes = nodesToLayout || nodes
@@ -579,7 +629,104 @@ export default function Topology() {
     }
   }, [isAdmin])
 
+  const handleEditParent = async () => {
+    if (!currentParent) return
+    try {
+      const parentNode = await api.nodes.get(currentParent.id)
+      setEditNode({
+        id: String(parentNode.id),
+        position: { x: parentNode.x || 0, y: parentNode.y || 0 },
+        data: {
+          label: parentNode.name,
+          ipAddress: parentNode.ipAddress,
+          deviceType: parentNode.deviceType,
+          location: parentNode.location,
+          description: parentNode.description,
+          monitoringInterval: parentNode.monitoringInterval,
+          monitorConfig: parentNode.monitorConfig || {},
+        }
+      })
+      setActiveTab('info')
+      setDiagOutput([])
+      setDiagRunning(false)
+      setShowModal(true)
+      loadMaintenanceWindows(parentNode.id)
+    } catch (err) {
+      console.error('Failed to load parent node details:', err)
+    }
+  }
+
+  const handleExportTopology = async () => {
+    try {
+      const data = await api.nodes.exportTopology()
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2))
+      const downloadAnchor = document.createElement('a')
+      downloadAnchor.setAttribute("href",     dataStr)
+      downloadAnchor.setAttribute("download", `topology_backup_${new Date().toISOString().slice(0,10)}.json`)
+      document.body.appendChild(downloadAnchor)
+      downloadAnchor.click()
+      downloadAnchor.remove()
+    } catch (err) {
+      console.error('Failed to export topology:', err)
+      alert('Failed to export topology data')
+    }
+  }
+
+  const handleImportTopology = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const confirmImport = window.confirm(
+      'Caution: Importing this topology file will completely delete all existing nodes and connections. Do you want to proceed?'
+    )
+    if (!confirmImport) {
+      e.target.value = ''
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string)
+        await api.nodes.importTopology(json)
+        alert('Topology imported successfully!')
+        
+        setCurrentParent(null)
+        setParentStack([])
+        
+        loadNodes()
+      } catch (err: any) {
+        console.error('Failed to import topology:', err)
+        alert('Failed to parse or import topology file: ' + (err.message || 'Invalid format'))
+      } finally {
+        e.target.value = ''
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  const handleSearchFocus = () => {
+    if (!searchQuery) return
+    const matchedNode = nodes.find(n => 
+      String(n.data.label).toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(n.data.ipAddress || '').toLowerCase().includes(searchQuery.toLowerCase())
+    )
+
+    if (matchedNode) {
+      setCenter(matchedNode.position.x + 80, matchedNode.position.y + 30, { zoom: 1.4, duration: 800 })
+    }
+  }
+
   const onNodeDoubleClick = (_: any, node: Node) => {
+    if (node.data.deviceType === 'pop') {
+      setParentStack((prev) => [...prev, currentParent])
+      setCurrentParent({
+        id: parseInt(node.id),
+        name: String(node.data.label)
+      })
+      return
+    }
+
     if (!isAdmin) return
     setEditNode(node)
     setActiveTab('info')
@@ -604,9 +751,23 @@ export default function Topology() {
       y: editNode.position.y,
     }
     await api.nodes.update(id, data)
+    if (currentParent && currentParent.id === id) {
+      setCurrentParent((prev: any) => prev ? { ...prev, name: data.name } : null)
+    }
     setShowModal(false)
     loadNodes()
   }
+
+  const addNewNode = useCallback(async (type: string, x: number, y: number) => {
+    if (!isAdmin) return
+    const name = `New-${nodeTypeColors[type]?.label || type}-${Date.now() % 1000}`
+    await api.nodes.create({
+      name, ipAddress: '0.0.0.0', deviceType: type,
+      customerId: 1, x, y, monitoringInterval: 30,
+      parentId: currentParent ? currentParent.id : null
+    })
+    loadNodes()
+  }, [isAdmin, currentParent, loadNodes])
 
   const onDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault()
@@ -618,17 +779,7 @@ export default function Topology() {
       y: event.clientY - bounds.top,
     })
     addNewNode(type, pos.x, pos.y)
-  }, [reactFlowInstance])
-
-  const addNewNode = async (type: string, x: number, y: number) => {
-    if (!isAdmin) return
-    const name = `New-${nodeTypeColors[type]?.label || type}-${Date.now() % 1000}`
-    await api.nodes.create({
-      name, ipAddress: '0.0.0.0', deviceType: type,
-      customerId: 1, x, y, monitoringInterval: 30,
-    })
-    loadNodes()
-  }
+  }, [reactFlowInstance, addNewNode])
 
   const handleDeleteNode = async (id: number) => {
     if (!isAdmin || !confirm('Delete this node?')) return
@@ -650,12 +801,86 @@ export default function Topology() {
     event.dataTransfer.dropEffect = 'move'
   }, [])
 
+  const processedNodes = nodes.map(node => {
+    const matches = searchQuery === '' || 
+      String(node.data.label).toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(node.data.ipAddress || '').toLowerCase().includes(searchQuery.toLowerCase())
+
+    return {
+      ...node,
+      style: {
+        ...node.style,
+        opacity: matches ? 1 : 0.25,
+        transition: 'opacity 0.3s',
+      }
+    }
+  })
+
+  const processedEdges = edges.map(edge => {
+    const sourceNode = nodes.find(n => n.id === edge.source)
+    const targetNode = nodes.find(n => n.id === edge.target)
+
+    const sourceMatches = searchQuery === '' || (sourceNode && (
+      String(sourceNode.data.label).toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(sourceNode.data.ipAddress || '').toLowerCase().includes(searchQuery.toLowerCase())
+    ))
+
+    const targetMatches = searchQuery === '' || (targetNode && (
+      String(targetNode.data.label).toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(targetNode.data.ipAddress || '').toLowerCase().includes(searchQuery.toLowerCase())
+    ))
+
+    const faded = !sourceMatches || !targetMatches
+
+    return {
+      ...edge,
+      style: {
+        ...edge.style,
+        opacity: faded ? 0.15 : 1,
+        transition: 'opacity 0.3s',
+      }
+    }
+  })
+
   if (loading) return <div className="flex items-center justify-center h-64 text-zinc-400">Loading topology...</div>
 
   return (
     <div className="h-full space-y-3">
       <div className="flex items-center justify-between relative">
-        <h1 className="text-lg font-semibold">Topology Editor</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold">Topology Editor</h1>
+          {currentParent && (
+            <div className="flex items-center gap-2 text-xs bg-zinc-50 dark:bg-zinc-800/40 px-2.5 py-1 rounded-lg border dark:border-zinc-700/50">
+              <button 
+                onClick={() => {
+                  const nextStack = [...parentStack]
+                  const prevParent = nextStack.pop() || null
+                  setParentStack(nextStack)
+                  setCurrentParent(prevParent)
+                }}
+                className="text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-bold transition-colors"
+              >
+                ← Back
+              </button>
+              <span className="text-zinc-400">/</span>
+              {parentStack.filter(Boolean).map((p) => (
+                <span key={p.id} className="text-zinc-400 dark:text-zinc-500">
+                  {p.name} <span className="text-zinc-300 dark:text-zinc-600 mx-1">/</span>
+                </span>
+              ))}
+              <span className="text-zinc-700 dark:text-zinc-200 font-semibold">{currentParent.name}</span>
+              {isAdmin && (
+                <button 
+                  onClick={handleEditParent}
+                  className="ml-1 text-[10px] bg-zinc-200/50 hover:bg-zinc-200 dark:bg-zinc-700/50 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-1.5 py-0.5 rounded font-medium transition-colors"
+                  title="Edit POP Settings"
+                >
+                  ✎ Edit Name
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {isAdmin && (
             <div className="relative">
@@ -689,6 +914,52 @@ export default function Topology() {
               )}
             </div>
           )}
+          {isAdmin && (
+            <>
+              <button 
+                onClick={handleExportTopology} 
+                className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 font-semibold flex items-center gap-1.5 border dark:border-zinc-700/50 transition-colors"
+                title="Export entire network topology to a JSON file"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export
+              </button>
+              <label 
+                className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 font-semibold flex items-center gap-1.5 border dark:border-zinc-700/50 cursor-pointer transition-colors"
+                title="Import network topology from a JSON file (Overwrites existing)"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Import
+                <input 
+                  type="file" 
+                  accept=".json" 
+                  onChange={handleImportTopology} 
+                  className="hidden" 
+                />
+              </label>
+            </>
+          )}
+          <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-700/60 px-2.5 py-1.5 rounded-lg border dark:border-zinc-700/50 w-44 lg:w-56">
+            <Search className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <input 
+              type="text"
+              placeholder="Search Name or IP..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSearchFocus()
+              }}
+              className="bg-transparent border-0 text-xs focus:ring-0 w-full outline-none p-0 text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500"
+            />
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 font-bold"
+              >
+                ✕
+              </button>
+            )}
+          </div>
           <button onClick={loadNodes} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200">Refresh</button>
         </div>
       </div>
@@ -697,8 +968,8 @@ export default function Topology() {
 
       <div className="h-[calc(100vh-16rem)] bg-white dark:bg-zinc-800 rounded-xl border" ref={reactFlowWrapper}>
         <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={processedNodes}
+          edges={processedEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -1030,5 +1301,13 @@ export default function Topology() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function Topology() {
+  return (
+    <ReactFlowProvider>
+      <TopologyInner />
+    </ReactFlowProvider>
   )
 }

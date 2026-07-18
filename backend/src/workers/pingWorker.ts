@@ -105,12 +105,29 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
     })
 
     if (newStatus === 'down') {
+      const parentDownCheck = await isParentDown(node.id)
+      let causeText = undefined
+      let shouldAlert = true
+
+      if (parentDownCheck && parentDownCheck.isDown) {
+        causeText = `Suppressed: Parent POP [${parentDownCheck.parentName}] is Down`
+        shouldAlert = false
+      }
+
       const alarm = await prisma.alarm.create({
-        data: { nodeId: node.id, status: 'active', startTime: new Date() },
+        data: { 
+          nodeId: node.id, 
+          status: 'active', 
+          startTime: new Date(),
+          cause: causeText
+        },
       })
       state.alarmId = alarm.id
       eventEmitter.emit('alarm:created', alarm)
-      sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'down', deviceType: node.deviceType }).catch(() => {})
+
+      if (shouldAlert) {
+        sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'down', deviceType: node.deviceType }).catch(() => {})
+      }
     }
 
     if (newStatus === 'warning') {
@@ -149,6 +166,11 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
       packetLoss: detail.packetLoss,
       lastChecked: new Date(),
     })
+
+    const dbNode = await prisma.node.findUnique({ where: { id: node.id }, select: { parentId: true } })
+    if (dbNode?.parentId) {
+      await updateParentStatus(dbNode.parentId)
+    }
   } else {
     await prisma.node.update({
       where: { id: node.id },
@@ -165,13 +187,67 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
   nodeStates.set(node.id, state)
 }
 
+async function updateParentStatus(parentId: number) {
+  try {
+    const children = await prisma.node.findMany({
+      where: { parentId, enabled: true },
+      select: { status: true }
+    })
+
+    if (children.length === 0) {
+      await prisma.node.update({
+        where: { id: parentId },
+        data: { status: 'unknown' }
+      })
+      return
+    }
+
+    let newStatus = 'up'
+    const statuses = children.map(c => c.status)
+
+    if (statuses.includes('down')) {
+      const allDown = statuses.every(s => s === 'down')
+      newStatus = allDown ? 'down' : 'warning'
+    } else if (statuses.includes('warning')) {
+      newStatus = 'warning'
+    } else if (statuses.includes('maintenance')) {
+      const allMaint = statuses.every(s => s === 'maintenance' || s === 'unknown')
+      if (allMaint) newStatus = 'maintenance'
+    }
+
+    const parentNode = await prisma.node.findUnique({
+      where: { id: parentId },
+      select: { id: true, status: true, parentId: true }
+    })
+
+    if (parentNode && parentNode.status !== newStatus) {
+      await prisma.node.update({
+        where: { id: parentId },
+        data: { status: newStatus, lastChecked: new Date() }
+      })
+
+      eventEmitter.emit('node:status', {
+        nodeId: parentId,
+        status: newStatus,
+        lastChecked: new Date()
+      })
+
+      if (parentNode.parentId) {
+        await updateParentStatus(parentNode.parentId)
+      }
+    }
+  } catch (err) {
+    console.error('[PingWorker] Error updating parent status:', err)
+  }
+}
+
 export async function startPingWorker() {
   console.log('[PingWorker] Starting monitoring loop...')
 
   const run = async () => {
     try {
       const nodes = await prisma.node.findMany({
-        where: { enabled: true },
+        where: { enabled: true, NOT: { deviceType: 'pop' } },
         select: { id: true, ipAddress: true, monitoringInterval: true, status: true, name: true, deviceType: true, customerId: true, isMaintenance: true, monitorConfig: true },
       })
 
@@ -188,4 +264,28 @@ export async function startPingWorker() {
 
   await run()
   setInterval(run, CHECK_INTERVAL_MS)
+}
+
+async function isParentDown(nodeId: number): Promise<{ isDown: boolean; parentName?: string } | null> {
+  let currentId = nodeId
+  while (true) {
+    const node = await prisma.node.findUnique({
+      where: { id: currentId },
+      select: { parentId: true }
+    })
+    if (!node || !node.parentId) {
+      return null
+    }
+
+    const parent = await prisma.node.findUnique({
+      where: { id: node.parentId },
+      select: { id: true, name: true, status: true }
+    })
+
+    if (!parent) return null
+    if (parent.status === 'down') {
+      return { isDown: true, parentName: parent.name }
+    }
+    currentId = parent.id
+  }
 }

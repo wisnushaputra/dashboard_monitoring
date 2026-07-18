@@ -75,6 +75,9 @@ model Node {
   connectionsFrom   Connection[] @relation("from_node")
   connectionsTo     Connection[] @relation("to_node")
   maintenanceWindows MaintenanceWindow[]
+  parentId          Int?     @map("parent_id")
+  parent            Node?    @relation("ParentChild", fields: [parentId], references: [id], onDelete: Cascade)
+  children          Node[]   @relation("ParentChild")
 
   @@map("nodes")
 }

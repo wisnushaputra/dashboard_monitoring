@@ -57,6 +57,8 @@ export const api = {
       request(`/nodes/maintenance-windows/${windowId}`, { method: 'DELETE' }),
     updatePositions: (positions: Array<{ id: number; x: number; y: number }>) =>
       request('/nodes/positions', { method: 'PUT', body: JSON.stringify({ positions }) }),
+    exportTopology: () => request('/nodes/topology/export'),
+    importTopology: (data: any) => request('/nodes/topology/import', { method: 'POST', body: JSON.stringify(data) }),
   },
   alarms: {
     list: (params?: Record<string, string>) =>
@@ -91,10 +93,16 @@ export const api = {
   reports: {
     preview: (customerId: number, startDate: string, endDate: string) =>
       request(`/reports/sla/preview?customerId=${customerId}&startDate=${startDate}&endDate=${endDate}`),
+    mttr: (startDate: string, endDate: string) =>
+      request(`/reports/mttr?startDate=${startDate}&endDate=${endDate}`),
     pdfUrl: (customerId: number, startDate: string, endDate: string) =>
       `${BASE}/reports/sla/pdf?customerId=${customerId}&startDate=${startDate}&endDate=${endDate}&token=${token}`,
     xlsxUrl: (customerId: number, startDate: string, endDate: string) =>
       `${BASE}/reports/sla/xlsx?customerId=${customerId}&startDate=${startDate}&endDate=${endDate}&token=${token}`,
+    mttrPdfUrl: (startDate: string, endDate: string) =>
+      `${BASE}/reports/mttr/pdf?startDate=${startDate}&endDate=${endDate}&token=${token}`,
+    mttrXlsxUrl: (startDate: string, endDate: string) =>
+      `${BASE}/reports/mttr/xlsx?startDate=${startDate}&endDate=${endDate}&token=${token}`,
   },
   audit: {
     list: (params?: Record<string, string>) =>

@@ -9,14 +9,113 @@ const router = Router()
 
 router.use(authMiddleware)
 
+router.get('/topology/export', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  try {
+    const [nodes, connections] = await Promise.all([
+      prisma.node.findMany(),
+      prisma.connection.findMany(),
+    ])
+    res.json({ nodes, connections })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to export topology' })
+  }
+})
+
+router.post('/topology/import', roleMiddleware('admin'), async (req: Request, res: Response) => {
+  const { nodes, connections } = req.body
+  if (!Array.isArray(nodes) || !Array.isArray(connections)) {
+    res.status(400).json({ error: 'Invalid topology format' })
+    return
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete all connections and nodes
+      await tx.connection.deleteMany()
+      await tx.node.deleteMany()
+
+      // 2. Insert nodes one by one to map old IDs to new IDs
+      const oldToNewIdMap: Record<number, number> = {}
+      for (const n of nodes) {
+        const created = await tx.node.create({
+          data: {
+            name: n.name,
+            ipAddress: n.ipAddress,
+            deviceType: n.deviceType,
+            location: n.location,
+            description: n.description,
+            monitoringInterval: n.monitoringInterval,
+            monitorType: n.monitorType,
+            monitorConfig: n.monitorConfig,
+            status: n.status || 'unknown',
+            enabled: n.enabled !== undefined ? n.enabled : true,
+            x: n.x,
+            y: n.y,
+            customerId: n.customerId || 1,
+            siteId: n.siteId,
+          }
+        })
+        oldToNewIdMap[n.id] = created.id
+      }
+
+      // 3. Update parentId for all nodes
+      for (const n of nodes) {
+        if (n.parentId) {
+          const newParentId = oldToNewIdMap[n.parentId]
+          const newNodeId = oldToNewIdMap[n.id]
+          if (newParentId && newNodeId) {
+            await tx.node.update({
+              where: { id: newNodeId },
+              data: { parentId: newParentId }
+            })
+          }
+        }
+      }
+
+      // 4. Insert connections mapping old IDs to new IDs
+      for (const c of connections) {
+        const newFrom = oldToNewIdMap[c.fromNodeId]
+        const newTo = oldToNewIdMap[c.toNodeId]
+        if (newFrom && newTo) {
+          await tx.connection.create({
+            data: {
+              fromNodeId: newFrom,
+              toNodeId: newTo,
+              sourceHandle: c.sourceHandle,
+              targetHandle: c.targetHandle,
+            }
+          })
+        }
+      }
+    })
+
+    logAudit({
+      userId: (req as any).user.id,
+      username: (req as any).user.username,
+      action: 'TOPOLOGY_IMPORT',
+      target: 'Topology',
+      details: `Imported topology containing ${nodes.length} nodes and ${connections.length} connections`,
+      ipAddress: req.ip,
+    })
+
+    res.json({ success: true })
+  } catch (err: any) {
+    console.error('Failed to import topology:', err)
+    res.status(500).json({ error: err.message || 'Failed to import topology' })
+  }
+})
+
 router.get('/', async (req: Request, res: Response) => {
-  const { customerId, siteId, status, deviceType, search } = req.query
+  const { customerId, siteId, status, deviceType, search, parentId } = req.query
 
   const where: any = {}
   if (customerId) where.customerId = parseInt(customerId as string)
   if (siteId) where.siteId = parseInt(siteId as string)
   if (status) where.status = status
   if (deviceType) where.deviceType = deviceType
+  if (parentId !== undefined) {
+    where.parentId = parentId === 'null' || parentId === '' ? null : parseInt(parentId as string)
+  }
   if (search) {
     where.OR = [
       { name: { contains: search as string, mode: 'insensitive' } },
@@ -288,14 +387,28 @@ router.get('/:id', async (req: Request, res: Response) => {
 })
 
 router.post('/', roleMiddleware('admin'), async (req: Request, res: Response) => {
-  const { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId, x, y } = req.body
+  const { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId, x, y, parentId } = req.body
   if (!name || !ipAddress || !customerId) {
     res.status(400).json({ error: 'Name, IP address, and customer ID required' })
     return
   }
 
   const node = await prisma.node.create({
-    data: { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId: siteId || null, x, y },
+    data: { 
+      name, 
+      ipAddress, 
+      deviceType, 
+      location, 
+      description, 
+      monitoringInterval, 
+      monitorType, 
+      monitorConfig, 
+      customerId, 
+      siteId: siteId || null, 
+      x, 
+      y,
+      parentId: parentId ? parseInt(parentId) : null
+    },
   })
 
   logAudit({
@@ -333,7 +446,7 @@ router.put('/positions', roleMiddleware('admin'), async (req: Request, res: Resp
 
 router.put('/:id', roleMiddleware('admin'), async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
-  const { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId, x, y, enabled } = req.body
+  const { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId, x, y, enabled, parentId } = req.body
 
   const data: any = {}
   if (name !== undefined) data.name = name
@@ -349,6 +462,7 @@ router.put('/:id', roleMiddleware('admin'), async (req: Request, res: Response) 
   if (x !== undefined) data.x = x
   if (y !== undefined) data.y = y
   if (enabled !== undefined) data.enabled = enabled
+  if (parentId !== undefined) data.parentId = parentId ? parseInt(parentId) : null
 
   const node = await prisma.node.update({ where: { id }, data })
 

@@ -11,9 +11,9 @@
               ┌──────────────┼──────────────┐
               │              │              │
         ┌─────▼──────┐ ┌────▼──────┐ ┌─────▼──────┐
-        │  Routes     │ │  Ping     │ │ Notif      │
-        │  (7 files)  │ │  Worker   │ │ Lib        │
-        │  Express    │ │  (5s loop)│ │ (webhook)  │
+        │  Routes    │ │  Ping     │ │ Notif      │
+        │  (7 files) │ │  Worker   │ │ Lib        │
+        │  Express   │ │  (5s loop)│ │ (webhook)  │
         └─────┬──────┘ └────┬──────┘ └─────┬──────┘
               │              │              │
               │        ┌─────▼──────┐       │
