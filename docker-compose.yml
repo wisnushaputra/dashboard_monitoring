@@ -1,4 +1,17 @@
+# =============================================================================
+# NOC Dashboard — Docker Compose Production Stack
+# =============================================================================
+# Usage:
+#   docker compose up --build -d       # Build & start all services
+#   docker compose logs -f             # Follow live logs
+#   docker compose down                # Stop all services
+#   docker compose down -v             # Stop & remove data volumes (CAUTION!)
+# =============================================================================
+
 services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 Database
+  # ---------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
     container_name: noc_db
@@ -10,6 +23,8 @@ services:
       - "${DB_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - noc_network
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -17,9 +32,14 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # Backend API — Express + Prisma + ICMP Ping Worker
+  # ---------------------------------------------------------------------------
   backend:
     build: ./backend
     container_name: noc_backend
+    cap_add:
+      - NET_RAW
     environment:
       DATABASE_URL: "postgresql://postgres:${DB_PASSWORD:-password}@db:5432/dashboard_monitoring"
       JWT_SECRET: ${JWT_SECRET:-noc-dashboard-secret}
@@ -30,8 +50,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - noc_network
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/auth/me || exit 0"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
+  # ---------------------------------------------------------------------------
+  # Frontend — React SPA served by Nginx (with API reverse proxy)
+  # ---------------------------------------------------------------------------
   frontend:
     build: ./frontend
     container_name: noc_frontend
@@ -39,7 +70,16 @@ services:
       - "${FRONTEND_PORT:-3000}:80"
     depends_on:
       - backend
+    networks:
+      - noc_network
     restart: always
+
+# =============================================================================
+# Shared Resources
+# =============================================================================
+networks:
+  noc_network:
+    driver: bridge
 
 volumes:
   pgdata:
