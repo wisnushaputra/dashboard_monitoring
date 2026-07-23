@@ -47,6 +47,8 @@ export const api = {
       `/api/nodes/${id}/diagnostic?type=${type}&token=${token}`,
     toggleMaintenance: (id: number, isMaintenance: boolean) =>
       request(`/nodes/${id}/maintenance`, { method: 'PUT', body: JSON.stringify({ isMaintenance }) }),
+    toggleFreeze: (id: number, enabled: boolean) =>
+      request(`/nodes/${id}/toggle-freeze`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
     listMaintenanceWindows: (id: number) =>
       request(`/nodes/${id}/maintenance-windows`),
     listAllMaintenanceWindows: () =>
@@ -59,6 +61,41 @@ export const api = {
       request('/nodes/positions', { method: 'PUT', body: JSON.stringify({ positions }) }),
     exportTopology: () => request('/nodes/topology/export'),
     importTopology: (data: any) => request('/nodes/topology/import', { method: 'POST', body: JSON.stringify(data) }),
+  },
+  configs: {
+    list: (nodeId: number) => request(`/nodes/${nodeId}/configs`),
+    backup: (nodeId: number) => request(`/nodes/${nodeId}/configs/backup`, { method: 'POST' }),
+    diff: (nodeId: number, v1: number, v2: number) => request(`/nodes/${nodeId}/configs/diff?v1=${v1}&v2=${v2}`),
+    getById: (nodeId: number, configId: number) => request(`/nodes/${nodeId}/configs/${configId}`),
+  },
+  anomalies: {
+    list: (limit = 20) => request(`/anomalies?limit=${limit}`),
+    getForNode: (nodeId: number) => request(`/anomalies/node/${nodeId}`),
+  },
+  publicStatus: {
+    get: (code: string) => request(`/public/status/${code}`),
+  },
+  rca: {
+    list: () => request('/rca'),
+    create: (data: any) => request('/rca', { method: 'POST', body: JSON.stringify(data) }),
+    get: (id: number) => request(`/rca/${id}`),
+    update: (id: number, data: any) => request(`/rca/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    pdfUrl: (id: number) => `${BASE}/rca/${id}/pdf?token=${token}`,
+  },
+  shifts: {
+    summary: () => request('/shifts/summary'),
+    list: (page = 1) => request(`/shifts?page=${page}`),
+    create: (data: any) => request('/shifts', { method: 'POST', body: JSON.stringify(data) }),
+    get: (id: number) => request(`/shifts/${id}`),
+    acknowledge: (id: number) => request(`/shifts/${id}/acknowledge`, { method: 'PUT' }),
+    pdfUrl: (id: number) => `${BASE}/shifts/${id}/pdf?token=${token}`,
+  },
+  slaBilling: {
+    get: (monthYear?: string) => request(`/sla-billing?monthYear=${monthYear || ''}`),
+    updateContract: (customerId: number, data: { slaTarget?: number; monthlyFee?: number }) =>
+      request(`/sla-billing/customer/${customerId}/contract`, { method: 'PUT', body: JSON.stringify(data) }),
+    pdfUrl: (customerId: number, monthYear?: string) =>
+      `${BASE}/sla-billing/pdf/${customerId}?monthYear=${monthYear || ''}&token=${token}`,
   },
   alarms: {
     list: (params?: Record<string, string>) =>
@@ -87,6 +124,12 @@ export const api = {
       `${BASE}/export/alarms/pdf?${new URLSearchParams(params || {})}&token=${token}`,
   },
   notifications: {
+    get: () => request('/notifications'),
+    update: (data: any) => request('/notifications', { method: 'PUT', body: JSON.stringify(data) }),
+    testTelegram: (data: { botToken: string; chatId: string }) =>
+      request('/notifications/telegram/send-test', { method: 'POST', body: JSON.stringify(data) }),
+    testTelegramReport: (data?: { botToken?: string; chatId?: string }) =>
+      request('/notifications/telegram/test-report', { method: 'POST', body: JSON.stringify(data || {}) }),
     uploadAlarmSound: (fileData: string) =>
       request('/notifications/alarm-sound', { method: 'POST', body: JSON.stringify({ fileData }) }),
   },

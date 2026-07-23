@@ -1,15 +1,25 @@
 import { useState, useEffect } from 'react'
 import { api } from '../lib/api'
-import { Download, CheckCircle, Clock, Server, AlertTriangle, Activity } from 'lucide-react'
+import { Download, CheckCircle, Clock, Server, AlertTriangle, Activity, Globe, Send, MessageSquare, CheckCircle2, AlertCircle, Sparkles, DollarSign } from 'lucide-react'
+import SlaBillingCalculator from '../components/SlaBillingCalculator'
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as ChartTooltip, 
   CartesianGrid, AreaChart, Area 
 } from 'recharts'
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState<'sla' | 'mttr'>('sla')
+  const [activeTab, setActiveTab] = useState<'sla' | 'mttr' | 'telegram' | 'slaBilling'>('sla')
   const [customers, setCustomers] = useState<any[]>([])
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
+
+  // Telegram settings state
+  const [telegramEnabled, setTelegramEnabled] = useState(false)
+  const [botToken, setBotToken] = useState('')
+  const [chatId, setChatId] = useState('')
+  const [teleStatusMsg, setTeleStatusMsg] = useState('')
+  const [teleErrorMsg, setTeleErrorMsg] = useState('')
+  const [teleLoading, setTeleLoading] = useState(false)
+  const [reportPreview, setReportPreview] = useState('')
   
   // Set default dates to current month (e.g. 1st of month to today)
   const [startDate, setStartDate] = useState(() => {
@@ -25,16 +35,51 @@ export default function Reports() {
   const [reportData, setReportData] = useState<any>(null)
   const [mttrData, setMttrData] = useState<any>(null)
 
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false)
+  const [newCustName, setNewCustName] = useState('')
+  const [newCustCode, setNewCustCode] = useState('')
+  const [custLoading, setCustLoading] = useState(false)
+  const [custError, setCustError] = useState('')
+
+  const loadCustomers = async () => {
+    try {
+      const data = await api.customers.list()
+      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name))
+      setCustomers(sorted)
+      if (sorted.length > 0 && !selectedCustomerId) {
+        setSelectedCustomerId(String(sorted[0].id))
+      }
+    } catch (err) {
+      console.error('Failed to load customers:', err)
+    }
+  }
+
   useEffect(() => {
-    api.customers.list()
-      .then((data) => {
-        setCustomers(data)
-        if (data.length > 0) {
-          setSelectedCustomerId(String(data[0].id))
-        }
-      })
-      .catch(() => {})
+    loadCustomers()
   }, [])
+
+  const handleAddCustomer = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newCustName || !newCustCode) return
+    setCustLoading(true)
+    setCustError('')
+    try {
+      const newCust = await api.customers.create({ name: newCustName, code: newCustCode })
+      setShowAddCustomerModal(false)
+      setNewCustName('')
+      setNewCustCode('')
+      const data = await api.customers.list()
+      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name))
+      setCustomers(sorted)
+      if (newCust && newCust.id) {
+        setSelectedCustomerId(String(newCust.id))
+      }
+    } catch (err: any) {
+      setCustError(err.message || 'Failed to add customer')
+    } finally {
+      setCustLoading(false)
+    }
+  }
 
   const handlePreview = async () => {
     if (!startDate || !endDate) return
@@ -123,25 +168,84 @@ export default function Reports() {
           >
             MTTR Response
           </button>
+          <button 
+            onClick={() => {
+              setActiveTab('telegram')
+              setError('')
+              setTeleStatusMsg('')
+              setTeleErrorMsg('')
+              // Load telegram settings
+              api.notifications.get().then((data: any) => {
+                setTelegramEnabled(data.telegramEnabled || false)
+                setBotToken(data.telegramBotToken || '')
+                setChatId(data.telegramChatId || '')
+              }).catch(() => {})
+            }}
+            className={`text-xs px-3 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+              activeTab === 'telegram' 
+                ? 'bg-white dark:bg-zinc-700 shadow-sm text-blue-600 dark:text-blue-400' 
+                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300'
+            }`}
+          >
+            <Send className="w-3.5 h-3.5 text-blue-500" />
+            Telegram 8 PM Reporter
+          </button>
+          <button 
+            onClick={() => setActiveTab('slaBilling')}
+            className={`text-xs px-3 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+              activeTab === 'slaBilling' 
+                ? 'bg-white dark:bg-zinc-700 shadow-sm text-emerald-600 dark:text-emerald-400' 
+                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300'
+            }`}
+          >
+            <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
+            SLA Billing & Penalty Calculator
+          </button>
         </div>
       </div>
 
-      {/* Control panel card */}
-      <div className="bg-white dark:bg-zinc-800 rounded-xl border p-5 shadow-sm space-y-4">
+      {/* Render SLA Billing Calculator */}
+      {activeTab === 'slaBilling' ? (
+        <SlaBillingCalculator />
+      ) : (
+        <>
+          {/* Control panel card */}
+          <div className="bg-white dark:bg-zinc-800 rounded-xl border p-5 shadow-sm space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {activeTab === 'sla' ? (
             <div>
-              <label className="text-xs font-semibold text-zinc-500 block mb-1">Select Corporate Customer</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-zinc-500 block">Select Corporate Customer</label>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCustomerModal(true)}
+                  className="text-[11px] text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-semibold transition-colors"
+                >
+                  + Add Customer
+                </button>
+              </div>
               <select
                 value={selectedCustomerId}
                 onChange={(e) => setSelectedCustomerId(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
+                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700 font-medium"
               >
                 <option value="">Choose a customer...</option>
                 {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.code}) {c._count?.nodes ? `— ${c._count.nodes} nodes` : ''}
+                  </option>
                 ))}
               </select>
+              {selectedCustomerId && (
+                <a
+                  href={`/status/${customers.find(c => String(c.id) === selectedCustomerId)?.code}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 mt-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
+                >
+                  <Globe className="w-3.5 h-3.5" /> Open Public Status Portal ↗
+                </a>
+              )}
             </div>
           ) : (
             <div className="flex flex-col justify-center">
@@ -484,6 +588,243 @@ export default function Reports() {
           </div>
         </div>
       )}
-    </div>
-  )
+
+      {/* Telegram 8 PM Reporter Tab Content */}
+      {activeTab === 'telegram' && (
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-zinc-800 rounded-xl border p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b dark:border-zinc-700 pb-3">
+              <div>
+                <h2 className="text-sm font-bold flex items-center gap-2 text-zinc-800 dark:text-zinc-100">
+                  <Send className="w-4 h-4 text-blue-500" />
+                  Integrasi Bot Telegram & Laporan Harian Jam 8 Malam (20:00 WIB)
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Konfigurasikan Bot Token & Chat ID Telegram untuk menerima ringkasan otomatis insiden DOWN setiap jam 20:00 WIB.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Status Integrasi:</span>
+                <input
+                  type="checkbox"
+                  checked={telegramEnabled}
+                  onChange={(e) => setTelegramEnabled(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded accent-blue-600 cursor-pointer"
+                />
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${telegramEnabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-700'}`}>
+                  {telegramEnabled ? 'Aktif (20:00 ON)' : 'Non-Aktif'}
+                </span>
+              </label>
+            </div>
+
+            {teleStatusMsg && (
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-medium flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                {teleStatusMsg}
+              </div>
+            )}
+
+            {teleErrorMsg && (
+              <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-xs font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                {teleErrorMsg}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 block mb-1">
+                  Telegram Bot Token
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 123456789:ABCdefGHIjklMNOpqrsTUVwxyZ"
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-xs font-mono dark:bg-zinc-700 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100"
+                />
+                <span className="text-[10px] text-zinc-400 mt-1 block">Dapatkan dari @BotFather di Telegram</span>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 block mb-1">
+                  Telegram Chat ID / Group ID
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. -100123456789 atau @channel_noc"
+                  value={chatId}
+                  onChange={(e) => setChatId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-xs font-mono dark:bg-zinc-700 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100"
+                />
+                <span className="text-[10px] text-zinc-400 mt-1 block">ID Grup NOC / Channel / Chat User</span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t dark:border-zinc-700">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={teleLoading || !botToken || !chatId}
+                  onClick={async () => {
+                    setTeleLoading(true)
+                    setTeleStatusMsg('')
+                    setTeleErrorMsg('')
+                    try {
+                      const res = await (api as any).notifications.testTelegram({ botToken, chatId })
+                      setTeleStatusMsg(res.message || 'Koneksi Telegram Bot berhasil!')
+                    } catch (err: any) {
+                      setTeleErrorMsg(err.message || 'Gagal terhubung ke Telegram Bot')
+                    } finally {
+                      setTeleLoading(false)
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-800 dark:text-zinc-200 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                >
+                  🧪 Tes Koneksi Bot
+                </button>
+
+                <button
+                  type="button"
+                  disabled={teleLoading || !botToken || !chatId}
+                  onClick={async () => {
+                    setTeleLoading(true)
+                    setTeleStatusMsg('')
+                    setTeleErrorMsg('')
+                    try {
+                      const res = await (api as any).notifications.testTelegramReport({ botToken, chatId })
+                      setTeleStatusMsg('Laporan Harian Jam 8 Malam berhasil dikirim ke Telegram!')
+                      if (res.reportPreview) setReportPreview(res.reportPreview)
+                    } catch (err: any) {
+                      setTeleErrorMsg(err.message || 'Gagal mengirim laporan harian')
+                    } finally {
+                      setTeleLoading(false)
+                    }
+                  }}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Kirim Laporan 8 Malam Sekarang
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={teleLoading}
+                onClick={async () => {
+                  setTeleLoading(true)
+                  setTeleStatusMsg('')
+                  setTeleErrorMsg('')
+                  try {
+                    await (api as any).notifications.update({
+                      telegramEnabled,
+                      telegramBotToken: botToken,
+                      telegramChatId: chatId,
+                    })
+                    setTeleStatusMsg('Konfigurasi Telegram Bot berhasil disimpan!')
+                  } catch (err: any) {
+                    setTeleErrorMsg(err.message || 'Gagal menyimpan konfigurasi')
+                  } finally {
+                    setTeleLoading(false)
+                  }
+                }}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-colors disabled:opacity-50"
+              >
+                Simpan Konfigurasi
+              </button>
+            </div>
+          </div>
+
+          {/* Report Format Sample & Preview Card */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-xl text-zinc-100 space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-blue-400 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-400" />
+                Format Laporan Tiket Insiden Harian Telegram (20:00 WIB)
+              </h3>
+              <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded-full font-mono font-bold">
+                STANDAR TIKET NOC
+              </span>
+            </div>
+
+            <div className="p-4 bg-zinc-950 rounded-xl border border-zinc-800 font-mono text-xs leading-relaxed text-emerald-400 overflow-x-auto whitespace-pre-wrap selection:bg-emerald-800">
+              {reportPreview || `.PASS24072026001 00:01 - 05:00 (5 jam) : Terdeteksi alarm down untuk link backup DIRGANTARA GBU dengan indikasi Penyambungan Kabel Udara (KU) ke Underground di Jl. Diponegoro & Replace ODC Gasibu = CLOSED`}
+            </div>
+
+            <div className="text-[11px] text-zinc-400 leading-snug space-y-1">
+              <p>📌 <b>Ketentuan Format Tiket Telegram:</b></p>
+              <ul className="list-disc list-inside space-y-0.5 text-zinc-400">
+                <li><code className="text-blue-300">.PASS&lt;DDMMYYYY&gt;&lt;SEQ&gt;</code> — Kode Tiket otomatis unik berurutan per hari.</li>
+                <li><code className="text-blue-300">Waktu Down & Durasi</code> — Jam mulai hingga jam pulih (contoh: <code>00:01 - 05:00 (5 jam)</code>).</li>
+                <li><code className="text-blue-300">Indikasi Penanganan</code> — Mengambil catatan pemulihan/penyebab insiden dari NOC.</li>
+                <li><code className="text-blue-300">= CLOSED / = OPEN</code> — Status penutupan tiket insiden otomatis.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Add Customer Modal */}
+      {showAddCustomerModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-toast">
+          <div className="bg-white dark:bg-zinc-800 rounded-xl max-w-md w-full p-6 shadow-2xl border dark:border-zinc-700 space-y-4">
+            <div className="flex items-center justify-between border-b dark:border-zinc-700 pb-3">
+              <h3 className="font-bold text-base text-zinc-900 dark:text-zinc-100">Add New Corporate Customer</h3>
+              <button
+                onClick={() => setShowAddCustomerModal(false)}
+                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddCustomer} className="space-y-4">
+              {custError && <div className="text-xs text-red-500 font-medium bg-red-50 dark:bg-red-950/30 p-2.5 rounded-lg border border-red-200 dark:border-red-900/30">{custError}</div>}
+
+              <div>
+                <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 block mb-1">Customer Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. PT Telkom Indonesia Tbk"
+                  value={newCustName}
+                  onChange={(e) => setNewCustName(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 block mb-1">Customer Code / ID</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. TELKOM-BDG"
+                  value={newCustCode}
+                  onChange={(e) => setNewCustCode(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t dark:border-zinc-700">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCustomerModal(false)}
+                  className="px-4 py-2 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 rounded-lg text-xs font-semibold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={custLoading}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  {custLoading ? 'Saving...' : 'Save Customer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  )}
+</div>
+)
 }

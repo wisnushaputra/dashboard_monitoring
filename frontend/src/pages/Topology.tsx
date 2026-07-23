@@ -11,7 +11,8 @@ import { useAuth } from '../context/AuthContext'
 import {
   X, Router as RouterIcon, Network as SwitchIcon, Shield as FirewallIcon,
   Server as ServerIcon, Radio as ApIcon, Signal as ModemIcon, Zap as UpsIcon,
-  Globe as OltIcon, HelpCircle, Folders as PopIcon, Download, Upload, Search
+  Globe as OltIcon, HelpCircle, Folders as PopIcon, Download, Upload, Search,
+  Snowflake, FileText, GitCompare, RefreshCw, Copy, Check, Brain
 } from 'lucide-react'
 
 const nodeTypeColors: Record<string, { bg: string; label: string }> = {
@@ -41,27 +42,32 @@ const deviceIcons: Record<string, any> = {
 }
 
 function StatusNode({ data }: { data: any }) {
-  const statusColor = data.status === 'down'
-    ? '#ef4444'
-    : data.status === 'warning'
-      ? '#f59e0b'
-      : data.status === 'maintenance'
-        ? '#a855f7'
-        : '#22c55e'
-  const isDown = data.status === 'down'
+  const isDisabled = data.enabled === false || data.status === 'disabled'
+  const statusColor = isDisabled
+    ? '#64748b'
+    : data.status === 'down'
+      ? '#ef4444'
+      : data.status === 'warning'
+        ? '#f59e0b'
+        : data.status === 'maintenance'
+          ? '#a855f7'
+          : '#22c55e'
+  const isDown = data.status === 'down' && !isDisabled
   const IconComponent = deviceIcons[data.deviceType] || HelpCircle
 
   // Soft background tint for status icon container
-  const iconBgTint = data.status === 'down'
-    ? 'bg-red-500/10 text-red-500 dark:text-red-400'
-    : data.status === 'warning'
-      ? 'bg-amber-500/10 text-amber-500 dark:text-amber-400'
-      : data.status === 'maintenance'
-        ? 'bg-purple-500/10 text-purple-500 dark:text-purple-400'
-        : 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
+  const iconBgTint = isDisabled
+    ? 'bg-slate-500/10 text-slate-400 dark:text-slate-400'
+    : data.status === 'down'
+      ? 'bg-red-500/10 text-red-500 dark:text-red-400'
+      : data.status === 'warning'
+        ? 'bg-amber-500/10 text-amber-500 dark:text-amber-400'
+        : data.status === 'maintenance'
+          ? 'bg-purple-500/10 text-purple-500 dark:text-purple-400'
+          : 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
 
   return (
-    <div className="px-4 py-3 rounded-2xl border bg-white dark:bg-zinc-900 shadow-lg text-zinc-800 dark:text-zinc-100 min-w-[160px] cursor-pointer relative transition-all duration-300 hover:shadow-xl"
+    <div className={`px-4 py-3 rounded-2xl border bg-white dark:bg-zinc-900 shadow-lg text-zinc-800 dark:text-zinc-100 min-w-[160px] cursor-pointer relative transition-all duration-300 hover:shadow-xl ${isDisabled ? 'opacity-70 grayscale-[25%]' : ''}`}
       style={{
         borderColor: statusColor,
         boxShadow: `0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 0 10px 1px ${statusColor}1A`
@@ -94,8 +100,17 @@ function StatusNode({ data }: { data: any }) {
 
         {/* Labels & Info */}
         <div className="min-w-0 flex-1">
-          <div className="font-bold text-xs truncate leading-snug">{data.label}</div>
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono mt-0.5 truncate">{data.ipAddress}</div>
+          <div className="font-bold text-xs truncate leading-snug flex items-center justify-between gap-1">
+            <span className="truncate">{data.label}</span>
+          </div>
+          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono mt-0.5 truncate flex items-center justify-between gap-1">
+            <span className="truncate">{data.ipAddress}</span>
+            {isDisabled && (
+              <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 uppercase shrink-0 border border-slate-300 dark:border-slate-700 flex items-center gap-0.5">
+                <Snowflake className="w-2 h-2" /> FROZEN
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Status dot indicator */}
@@ -143,10 +158,21 @@ function TopologyInner() {
   const [loading, setLoading] = useState(true)
   const [editNode, setEditNode] = useState<any>(null)
   const [showModal, setShowModal] = useState(false)
-  const [activeTab, setActiveTab] = useState<'info' | 'diagnostics' | 'maintenance'>('info')
+  const [activeTab, setActiveTab] = useState<'info' | 'diagnostics' | 'maintenance' | 'configs'>('info')
   const [diagType, setDiagType] = useState<'ping' | 'traceroute'>('ping')
   const [diagOutput, setDiagOutput] = useState<string[]>([])
   const [diagRunning, setDiagRunning] = useState(false)
+
+  // Config Backup & Diff state
+  const [configList, setConfigList] = useState<any[]>([])
+  const [configsLoading, setConfigsLoading] = useState(false)
+  const [backupLoading, setBackupLoading] = useState(false)
+  const [selectedV1, setSelectedV1] = useState<number | null>(null)
+  const [selectedV2, setSelectedV2] = useState<number | null>(null)
+  const [diffData, setDiffData] = useState<any | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [viewingConfigText, setViewingConfigText] = useState<string | null>(null)
+  const [copiedConfig, setCopiedConfig] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
   const consoleBottomRef = useRef<HTMLDivElement>(null)
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -201,6 +227,75 @@ function TopologyInner() {
       loadNodes()
     } catch (err) {
       console.error('Failed to delete window:', err)
+    }
+  }
+
+  const [customers, setCustomers] = useState<any[]>([])
+
+  useEffect(() => {
+    api.customers.list().then(setCustomers).catch(() => {})
+  }, [])
+
+  const handleToggleFreeze = async (enabledState: boolean) => {
+    if (!editNode) return
+    try {
+      await (api.nodes as any).toggleFreeze(parseInt(editNode.id), enabledState)
+      editNode.data.enabled = enabledState
+      editNode.data.status = enabledState ? 'unknown' : 'disabled'
+      setEditNode({ ...editNode })
+      loadNodes()
+    } catch (err) {
+      console.error('Failed to toggle freeze state:', err)
+    }
+  }
+
+  const loadNodeConfigs = async (nodeId: number) => {
+    setConfigsLoading(true)
+    setDiffData(null)
+    try {
+      const res = await (api as any).configs.list(nodeId)
+      setConfigList(res)
+      if (res.length >= 2) {
+        setSelectedV1(res[1].version)
+        setSelectedV2(res[0].version)
+        fetchDiff(nodeId, res[1].version, res[0].version)
+      } else if (res.length === 1) {
+        setSelectedV1(res[0].version)
+        setSelectedV2(res[0].version)
+      }
+    } catch (err) {
+      console.error('Failed to load configs:', err)
+    } finally {
+      setConfigsLoading(false)
+    }
+  }
+
+  const fetchDiff = async (nodeId: number, v1: number, v2: number) => {
+    if (v1 === v2) {
+      setDiffData(null)
+      return
+    }
+    setDiffLoading(true)
+    try {
+      const data = await (api as any).configs.diff(nodeId, v1, v2)
+      setDiffData(data)
+    } catch (err) {
+      console.error('Failed to fetch diff:', err)
+    } finally {
+      setDiffLoading(false)
+    }
+  }
+
+  const handleTriggerBackup = async () => {
+    if (!editNode) return
+    setBackupLoading(true)
+    try {
+      await (api as any).configs.backup(parseInt(editNode.id))
+      await loadNodeConfigs(parseInt(editNode.id))
+    } catch (err) {
+      console.error('Failed to trigger backup:', err)
+    } finally {
+      setBackupLoading(false)
     }
   }
 
@@ -294,7 +389,7 @@ function TopologyInner() {
             status: n.status || 'unknown', color: n.color,
             location: n.location, description: n.description,
             monitoringInterval: n.monitoringInterval, customerId: n.customerId,
-            isMaintenance: n.isMaintenance,
+            isMaintenance: n.isMaintenance, enabled: n.enabled !== undefined ? n.enabled : true,
             monitorConfig: n.monitorConfig,
           },
           draggable: isAdmin,
@@ -313,13 +408,19 @@ function TopologyInner() {
 
           const sourceStatus = sourceNode?.data?.status || 'unknown'
           const targetStatus = targetNode?.data?.status || 'unknown'
+          const sourceDisabled = sourceNode?.data?.enabled === false
+          const targetDisabled = targetNode?.data?.enabled === false
 
           let strokeColor = '#cbd5e1' // default gray
           let isAnimated = false
           let strokeDash = undefined
           let strokeWidth = 1.5
 
-          if (sourceStatus === 'down' || targetStatus === 'down') {
+          if (sourceDisabled || targetDisabled || sourceStatus === 'disabled' || targetStatus === 'disabled') {
+            strokeColor = '#94a3b8' // slate for disabled/frozen links
+            strokeDash = '2,4'
+            strokeWidth = 1.5
+          } else if (sourceStatus === 'down' || targetStatus === 'down') {
             strokeColor = '#ef4444' // red for down links
             strokeDash = '5,5'
             strokeWidth = 2
@@ -528,6 +629,7 @@ function TopologyInner() {
               data: {
                 ...n.data,
                 status: data.status,
+                enabled: data.enabled !== undefined ? data.enabled : n.data.enabled,
                 latencyMs: data.latencyMs,
                 packetLoss: data.packetLoss,
               },
@@ -1044,10 +1146,261 @@ function TopologyInner() {
               >
                 Maintenance
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!diagRunning) {
+                    setActiveTab('configs')
+                    loadNodeConfigs(parseInt(editNode.id))
+                  }
+                }}
+                className={`flex-1 py-1.5 font-medium border-b-2 transition-colors ${
+                  activeTab === 'configs'
+                    ? 'border-emerald-500 text-emerald-600 font-semibold'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200'
+                } ${diagRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Config Diff
+              </button>
             </div>
 
-            {activeTab === 'maintenance' ? (
+            {activeTab === 'configs' ? (
               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                {/* Config Backup Header Action */}
+                <div className="flex items-center justify-between bg-zinc-50 dark:bg-zinc-900/60 p-3 rounded-xl border border-zinc-200 dark:border-zinc-700">
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-indigo-500" />
+                      Device Configuration Backup
+                    </h3>
+                    <p className="text-[10px] text-zinc-400">Track device running-config backups & visual Git diffs</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={backupLoading}
+                    onClick={handleTriggerBackup}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${backupLoading ? 'animate-spin' : ''}`} />
+                    {backupLoading ? 'Backing Up...' : 'Backup Now'}
+                  </button>
+                </div>
+
+                {configsLoading ? (
+                  <div className="text-center py-6 text-xs text-zinc-400">Loading device config history...</div>
+                ) : configList.length === 0 ? (
+                  <div className="text-center py-8 bg-zinc-50 dark:bg-zinc-900/40 rounded-xl border border-dashed text-xs text-zinc-400 space-y-2">
+                    <FileText className="w-8 h-8 mx-auto text-zinc-300 dark:text-zinc-600" />
+                    <div>No configuration backups found for this device.</div>
+                    <button
+                      type="button"
+                      onClick={handleTriggerBackup}
+                      className="px-3 py-1 bg-indigo-500 text-white rounded-md text-[11px] font-semibold"
+                    >
+                      Create First Backup
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Version Selector & Diff Controls */}
+                    <div className="bg-zinc-50 dark:bg-zinc-900/40 p-3 rounded-xl border space-y-2">
+                      <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                        <GitCompare className="w-3.5 h-3.5 text-indigo-500" /> Compare Config Versions
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <label className="text-[10px] font-semibold text-zinc-400 block mb-1">Old Version (Base)</label>
+                          <select
+                            className="w-full px-2.5 py-1.5 border rounded-lg dark:bg-zinc-800 text-xs font-semibold"
+                            value={selectedV1 || ''}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value)
+                              setSelectedV1(v)
+                              if (selectedV2 && editNode) fetchDiff(parseInt(editNode.id), v, selectedV2)
+                            }}
+                          >
+                            {configList.map((c) => (
+                              <option key={c.id} value={c.version}>
+                                Version {c.version} ({new Date(c.createdAt).toLocaleDateString()})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-zinc-400 block mb-1">New Version (Target)</label>
+                          <select
+                            className="w-full px-2.5 py-1.5 border rounded-lg dark:bg-zinc-800 text-xs font-semibold"
+                            value={selectedV2 || ''}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value)
+                              setSelectedV2(v)
+                              if (selectedV1 && editNode) fetchDiff(parseInt(editNode.id), selectedV1, v)
+                            }}
+                          >
+                            {configList.map((c) => (
+                              <option key={c.id} value={c.version}>
+                                Version {c.version} ({new Date(c.createdAt).toLocaleDateString()})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Git-Style Diff Output Viewer */}
+                    {diffLoading ? (
+                      <div className="text-center py-4 text-xs text-zinc-400">Computing line diffs...</div>
+                    ) : diffData ? (
+                      <div className="border rounded-xl overflow-hidden bg-zinc-950 text-zinc-100 font-mono text-[11px]">
+                        <div className="bg-zinc-900 border-b border-zinc-800 px-3 py-2 flex items-center justify-between text-xs font-sans">
+                          <span className="font-bold text-zinc-300">
+                            Diff Output: v{diffData.v1} ➔ v{diffData.v2}
+                          </span>
+                          <div className="flex items-center gap-2 text-[10px] font-bold">
+                            <span className="text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+                              +{diffData.addedCount} additions
+                            </span>
+                            <span className="text-red-400 bg-red-950/60 px-2 py-0.5 rounded border border-red-800">
+                              -{diffData.removedCount} deletions
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="max-h-[220px] overflow-y-auto p-2 space-y-0.5 leading-relaxed font-mono select-text">
+                          {diffData.diffs.map((d: any, idx: number) => {
+                            if (d.type === 'added') {
+                              return (
+                                <div key={idx} className="bg-emerald-950/50 text-emerald-300 px-2 py-0.5 rounded flex gap-2 border-l-2 border-emerald-500">
+                                  <span className="w-6 text-right select-none opacity-50 shrink-0">{d.newLineNumber}</span>
+                                  <span className="select-none text-emerald-400 shrink-0">+</span>
+                                  <span className="break-all">{d.text}</span>
+                                </div>
+                              )
+                            } else if (d.type === 'removed') {
+                              return (
+                                <div key={idx} className="bg-red-950/50 text-red-300 px-2 py-0.5 rounded flex gap-2 border-l-2 border-red-500">
+                                  <span className="w-6 text-right select-none opacity-50 shrink-0">{d.oldLineNumber}</span>
+                                  <span className="select-none text-red-400 shrink-0">-</span>
+                                  <span className="break-all">{d.text}</span>
+                                </div>
+                              )
+                            }
+                            return (
+                              <div key={idx} className="px-2 py-0.5 text-zinc-400 flex gap-2 opacity-80">
+                                <span className="w-6 text-right select-none opacity-30 shrink-0">{d.newLineNumber || d.oldLineNumber}</span>
+                                <span className="select-none opacity-30 shrink-0"> </span>
+                                <span className="break-all">{d.text}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ) : selectedV1 === selectedV2 && selectedV1 !== null ? (
+                      <div className="text-center py-4 bg-zinc-50 dark:bg-zinc-900/30 rounded-xl border text-xs text-zinc-400">
+                        Version {selectedV1} selected on both sides (0 diffs). Select two different versions above to view config line diffs.
+                      </div>
+                    ) : null}
+
+                    {/* Version History List */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wider">Backup History Timeline</h4>
+                      <div className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
+                        {configList.map((c) => (
+                          <div
+                            key={c.id}
+                            className="flex items-center justify-between p-2.5 bg-white dark:bg-zinc-900 rounded-xl border hover:border-indigo-400 transition-colors text-xs"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 font-bold font-mono text-[11px]">
+                                v{c.version}
+                              </span>
+                              <div>
+                                <span className="font-semibold block">{new Date(c.createdAt).toLocaleString()}</span>
+                                <span className="text-[9px] text-zinc-400 font-mono">HASH: {c.hash.substring(0, 16)}...</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const full = await (api as any).configs.getById(parseInt(editNode.id), c.id)
+                                setViewingConfigText(full.content)
+                              }}
+                              className="px-2 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded text-[10px] font-medium"
+                            >
+                              View Config
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Raw Config Modal Viewer */}
+                {viewingConfigText && (
+                  <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+                    <div className="bg-zinc-950 text-zinc-100 rounded-xl border border-zinc-800 p-4 w-full max-w-xl space-y-3 shadow-2xl">
+                      <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                        <span className="font-bold text-xs font-mono text-indigo-400 flex items-center gap-1.5">
+                          <FileText className="w-4 h-4" /> Full Device Configuration Text
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(viewingConfigText)
+                              setCopiedConfig(true)
+                              setTimeout(() => setCopiedConfig(false), 2000)
+                            }}
+                            className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded text-xs flex items-center gap-1 font-sans"
+                          >
+                            {copiedConfig ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            {copiedConfig ? 'Copied!' : 'Copy'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setViewingConfigText(null)}
+                            className="p-1 text-zinc-400 hover:text-white"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <pre className="max-h-[350px] overflow-auto p-3 bg-zinc-900/80 rounded-lg text-[11px] font-mono leading-relaxed text-emerald-400 selection:bg-emerald-800">
+                        {viewingConfigText}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : activeTab === 'maintenance' ? (
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                {/* Freeze Switch */}
+                <div className="flex items-center justify-between border-b pb-3 bg-blue-50/50 dark:bg-blue-950/20 p-3 rounded-xl border border-blue-100 dark:border-blue-900/30">
+                  <div>
+                    <span className="text-xs font-bold flex items-center gap-1.5 text-blue-900 dark:text-blue-200">
+                      <Snowflake className="w-3.5 h-3.5 text-blue-500" />
+                      Freeze Node (Non-aktifkan Monitoring)
+                    </span>
+                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400 block mt-0.5">
+                      Bekukan monitoring node sementara. Engine tidak akan melakukan ping & alarm tidak dipicu.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleFreeze(editNode.data.enabled === false)}
+                    className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      editNode.data.enabled === false ? 'bg-blue-600' : 'bg-zinc-300 dark:bg-zinc-700'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        editNode.data.enabled === false ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
                 {/* Manual switch */}
                 <div className="flex items-center justify-between border-b pb-3">
                   <div>
@@ -1155,7 +1508,40 @@ function TopologyInner() {
                 </div>
               </div>
             ) : activeTab === 'diagnostics' ? (
-              <div className="space-y-3">
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                {/* AI Statistical Baseline & Anomaly Insights Card */}
+                <div className="bg-purple-50/50 dark:bg-purple-950/20 p-3 rounded-xl border border-purple-100 dark:border-purple-900/30 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                      <Brain className="w-4 h-4 text-purple-500 animate-pulse" />
+                      AI Statistical Baseline & Anomaly Analysis
+                    </span>
+                    <span className="text-[9px] bg-purple-200/60 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 font-extrabold px-2 py-0.5 rounded-full">
+                      Z-SCORE MODEL
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs pt-1">
+                    <div className="p-2 bg-white dark:bg-zinc-800 rounded-lg border">
+                      <div className="text-[9px] font-semibold text-zinc-400">Current Latency</div>
+                      <div className="font-bold text-purple-600 dark:text-purple-400 mt-0.5">
+                        {editNode.data.latencyMs ? `${Math.round(editNode.data.latencyMs)} ms` : '-'}
+                      </div>
+                    </div>
+                    <div className="p-2 bg-white dark:bg-zinc-800 rounded-lg border">
+                      <div className="text-[9px] font-semibold text-zinc-400">Jitter (Variation)</div>
+                      <div className="font-bold text-purple-600 dark:text-purple-400 mt-0.5">
+                        {editNode.data.jitterMs !== undefined && editNode.data.jitterMs !== null ? `${editNode.data.jitterMs.toFixed(1)} ms` : '0 ms'}
+                      </div>
+                    </div>
+                    <div className="p-2 bg-white dark:bg-zinc-800 rounded-lg border">
+                      <div className="text-[9px] font-semibold text-zinc-400">Status Pattern</div>
+                      <div className="font-bold uppercase text-emerald-600 dark:text-emerald-400 mt-0.5 text-[11px]">
+                        {editNode.data.status}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2.5">
                   <span className="text-xs text-zinc-500 font-medium">Type:</span>
                   <label className="flex items-center gap-1 text-xs cursor-pointer">
@@ -1224,19 +1610,38 @@ function TopologyInner() {
               </div>
             ) : (
               <div className="space-y-3">
-                <input className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
-                  value={editNode.data.label}
-                  onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, label: e.target.value } })}
-                  placeholder="Node Name" />
-                <input className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
-                  value={editNode.data.ipAddress}
-                  onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, ipAddress: e.target.value } })}
-                  placeholder="IP Address" />
-                <select className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
-                  value={editNode.data.deviceType}
-                  onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, deviceType: e.target.value } })}>
-                  {deviceTypes.map((t) => <option key={t} value={t}>{nodeTypeColors[t].label}</option>)}
-                </select>
+                <div>
+                  <label className="text-[10px] font-semibold text-zinc-400 block mb-0.5">Node Name</label>
+                  <input className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
+                    value={editNode.data.label}
+                    onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, label: e.target.value } })}
+                    placeholder="Node Name" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold text-zinc-400 block mb-0.5">IP Address</label>
+                  <input className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
+                    value={editNode.data.ipAddress}
+                    onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, ipAddress: e.target.value } })}
+                    placeholder="IP Address" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold text-zinc-400 block mb-0.5">Corporate Customer</label>
+                  <select className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700 font-medium"
+                    value={editNode.data.customerId || 1}
+                    onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, customerId: parseInt(e.target.value) } })}>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-semibold text-zinc-400 block mb-0.5">Device Type</label>
+                  <select className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
+                    value={editNode.data.deviceType}
+                    onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, deviceType: e.target.value } })}>
+                    {deviceTypes.map((t) => <option key={t} value={t}>{nodeTypeColors[t].label}</option>)}
+                  </select>
+                </div>
                 <input className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-zinc-700"
                   value={editNode.data.location || ''}
                   onChange={(e) => setEditNode({ ...editNode, data: { ...editNode.data, location: e.target.value } })}

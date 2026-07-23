@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
 import { authMiddleware } from '../middleware/auth'
+import { sendTelegramMessage, generateDailyReportText } from '../lib/telegramBot'
 import fs from 'fs'
 import path from 'path'
 
@@ -105,7 +106,10 @@ router.get('/', async (req: Request, res: Response) => {
 
 router.put('/', async (req: Request, res: Response) => {
   const userId = req.user!.userId
-  const { soundEnabled, emailEnabled, emailAddress, webhookEnabled, webhookUrl, slackEnabled, slackWebhook } = req.body
+  const {
+    soundEnabled, emailEnabled, emailAddress, webhookEnabled, webhookUrl, slackEnabled, slackWebhook,
+    telegramEnabled, telegramBotToken, telegramChatId
+  } = req.body
 
   const settings = await prisma.notificationSetting.upsert({
     where: { userId },
@@ -117,11 +121,68 @@ router.put('/', async (req: Request, res: Response) => {
       ...(webhookUrl !== undefined && { webhookUrl }),
       ...(slackEnabled !== undefined && { slackEnabled }),
       ...(slackWebhook !== undefined && { slackWebhook }),
+      ...(telegramEnabled !== undefined && { telegramEnabled }),
+      ...(telegramBotToken !== undefined && { telegramBotToken }),
+      ...(telegramChatId !== undefined && { telegramChatId }),
     },
-    create: { userId, soundEnabled, emailEnabled, emailAddress, webhookEnabled, webhookUrl, slackEnabled, slackWebhook },
+    create: {
+      userId, soundEnabled, emailEnabled, emailAddress, webhookEnabled, webhookUrl, slackEnabled, slackWebhook,
+      telegramEnabled, telegramBotToken, telegramChatId
+    },
   })
 
   res.json(settings)
+})
+
+// POST /api/notifications/telegram/send-test - Test Telegram Connection
+router.post('/telegram/send-test', async (req: Request, res: Response) => {
+  try {
+    const { botToken, chatId } = req.body
+    if (!botToken || !botToken.trim() || !chatId || !chatId.trim()) {
+      return res.status(400).json({ error: 'Telegram Bot Token and Chat ID are both required' })
+    }
+
+    const text = `🤖 <b>NOC Telegram Bot Connection Test</b>\n\nTelegram Bot successfully connected to Passnet Enterprise NOC System!\n<i>Timestamp: ${new Date().toLocaleString('id-ID')}</i>`
+    const result = await sendTelegramMessage(botToken, chatId, text)
+
+    if (result.ok) {
+      res.json({ success: true, message: 'Test message sent successfully to Telegram!' })
+    } else {
+      res.status(400).json({ error: `Telegram Error: ${result.error || 'Failed to send message'}` })
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/notifications/telegram/test-report - Instantly trigger 8 PM report
+router.post('/telegram/test-report', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.userId
+    let settings = await prisma.notificationSetting.findUnique({ where: { userId } })
+    
+    // Check if token was provided in body or DB
+    const botToken = req.body.botToken || settings?.telegramBotToken
+    const chatId = req.body.chatId || settings?.telegramChatId
+
+    if (!botToken || !botToken.trim()) {
+      return res.status(400).json({ error: 'Telegram Bot Token is required' })
+    }
+    if (!chatId || !chatId.trim()) {
+      return res.status(400).json({ error: 'Telegram Chat ID / Group ID is required' })
+    }
+
+    const reportText = await generateDailyReportText(new Date())
+    const result = await sendTelegramMessage(botToken, chatId, reportText)
+
+    if (result.ok) {
+      res.json({ success: true, message: 'Daily 8:00 PM incident report sent to Telegram!', reportPreview: reportText })
+    } else {
+      res.status(400).json({ error: `Telegram Delivery Error: ${result.error || 'Failed to dispatch report'}` })
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 export default router

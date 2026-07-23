@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
-  LayoutDashboard, Network, Bell, History, LogOut, Menu, Moon, Sun, Volume2, VolumeX, Users, X, AlertTriangle, Settings, Upload, Play, FileBarChart, Wrench, ShieldAlert
+  LayoutDashboard, Network, Bell, History, LogOut, Menu, Moon, Sun, Volume2, VolumeX, Users, X, AlertTriangle, Settings, Upload, Play, FileBarChart, Wrench, ShieldAlert, BookOpen
 } from 'lucide-react'
 import socket from '../lib/socket'
 import { api } from '../lib/api'
@@ -12,6 +12,7 @@ const navItems = [
   { to: '/topology', icon: Network, label: 'Topology' },
   { to: '/alarms', icon: Bell, label: 'Alarms' },
   { to: '/history', icon: History, label: 'History' },
+  { to: '/shifts', icon: BookOpen, label: 'Shift Logbook' },
   { to: '/reports', icon: FileBarChart, label: 'Reports' },
   { to: '/maintenance', icon: Wrench, label: 'Maintenance' },
 ]

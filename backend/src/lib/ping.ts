@@ -7,6 +7,7 @@ export interface PingResult {
   minLatency: number | null
   maxLatency: number | null
   avgLatency: number | null
+  jitterMs: number | null
 }
 
 export function ping(ip: string, count = 4): Promise<PingResult> {
@@ -19,7 +20,7 @@ export function ping(ip: string, count = 4): Promise<PingResult> {
     const start = Date.now()
     exec(cmd, (error, stdout) => {
       if (error && !stdout.includes('ttl') && !stdout.includes('time=')) {
-        resolve({ alive: false, latencyMs: null, packetLoss: 100, minLatency: null, maxLatency: null, avgLatency: null })
+        resolve({ alive: false, latencyMs: null, packetLoss: 100, minLatency: null, maxLatency: null, avgLatency: null, jitterMs: null })
         return
       }
 
@@ -32,6 +33,17 @@ export function ping(ip: string, count = 4): Promise<PingResult> {
       const maxLatency = times.length > 0 ? Math.max(...times) : null
       const avgLatency = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : null
 
+      let jitterMs: number | null = null
+      if (times.length >= 2) {
+        let diffSum = 0
+        for (let i = 1; i < times.length; i++) {
+          diffSum += Math.abs(times[i] - times[i - 1])
+        }
+        jitterMs = diffSum / (times.length - 1)
+      } else if (times.length === 1) {
+        jitterMs = 0
+      }
+
       resolve({
         alive,
         latencyMs: avgLatency,
@@ -39,6 +51,7 @@ export function ping(ip: string, count = 4): Promise<PingResult> {
         minLatency,
         maxLatency,
         avgLatency,
+        jitterMs,
       })
     })
   })
@@ -64,6 +77,7 @@ export function pingFast(ip: string): Promise<PingResult> {
         minLatency: times[0] || null,
         maxLatency: times[0] || null,
         avgLatency: times[0] || null,
+        jitterMs: 0,
       })
     })
   })

@@ -26,12 +26,35 @@ async function main() {
     create: { username: 'viewer', passwordHash: viewerPassword, role: 'viewer' },
   })
 
-  // Seed default customer
-  await prisma.customer.upsert({
-    where: { code: 'DFT' },
-    update: {},
-    create: { id: 1, name: 'Default Customer', code: 'DFT' },
-  })
+  // Seed corporate customers
+  const customersData = [
+    { id: 1, code: 'DFT', name: 'Default Customer' },
+    { code: 'PASS-INFRA', name: 'Passnet Infrastructure & Core' },
+    { code: 'DIRGANTARA', name: 'PT Dirgantara Yudha Artha' },
+    { code: 'KING-HOTEL', name: 'King Hotel Bandung' },
+    { code: 'ZEST-HOTEL', name: 'Hotel Zest Bandung' },
+    { code: 'DEDY-JAYA', name: 'Dedy Jaya Group (Hotel & RS)' },
+    { code: 'BJP-CORP', name: 'PT Bangunan Jaya Prima' },
+    { code: 'KUM-CORP', name: 'PT Karya Utama Mandiri' },
+    { code: 'HALAMAN-IDE', name: 'PT Halaman Ide Indonesia' },
+    { code: 'GRAHA-BUNDA', name: 'RSIA Graha Bunda' },
+    { code: 'AL-ZAZERA', name: 'Al-Zazera Corporate' },
+    { code: 'VML-BDG', name: 'VML Bandung' },
+    { code: 'INTI88', name: 'Inti88 Corporate' },
+    { code: 'UNPAS', name: 'Universitas Pasundan (UNPAS)' },
+    { code: 'SATERA', name: 'Satera Hotel Prime' },
+    { code: 'COFFEE-150', name: '150 Coffee Garden' },
+    { code: 'VALORE', name: 'Valore Hotel' },
+    { code: 'RETAIL-NET', name: 'Retail & Community Networks' },
+  ]
+
+  for (const c of customersData) {
+    await prisma.customer.upsert({
+      where: { code: c.code },
+      update: { name: c.name },
+      create: c,
+    })
+  }
 
   // Seed default site
   await prisma.site.upsert({

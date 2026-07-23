@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import socket from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
-import { Search, Download } from 'lucide-react'
+import { Search, Download, FileText } from 'lucide-react'
+import RcaModal from '../components/RcaModal'
 
 const deviceTypes = ['router', 'switch', 'firewall', 'server', 'olt', 'ap', 'modem', 'ups']
 
@@ -18,6 +19,12 @@ export default function Alarms() {
   const [resolveId, setResolveId] = useState<number | null>(null)
   const [editId, setEditId] = useState<number | null>(null)
   const [editNoteText, setEditNoteText] = useState('')
+
+  // RCA modal state
+  const [rcaAlarmId, setRcaAlarmId] = useState<number | undefined>(undefined)
+  const [rcaNodeId, setRcaNodeId] = useState<number | undefined>(undefined)
+  const [rcaNodeName, setRcaNodeName] = useState<string | undefined>(undefined)
+  const [showRcaModal, setShowRcaModal] = useState(false)
   const limit = 25
 
   useEffect(() => { api.customers.list().then(setCustomers).catch(() => {}) }, [])
@@ -150,7 +157,7 @@ export default function Alarms() {
                 </td>
                 <td className="px-4 py-2 text-zinc-400 max-w-[200px] truncate">{a.recoveryNote || '-'}</td>
                 {user?.role !== 'viewer' && (
-                  <td className="px-4 py-2">
+                  <td className="px-4 py-2 flex items-center gap-1">
                     {a.status === 'active' ? (
                       <button onClick={() => setResolveId(a.id)}
                         className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
@@ -162,6 +169,10 @@ export default function Alarms() {
                         Edit Note
                       </button>
                     )}
+                    <button onClick={() => { setRcaAlarmId(a.id); setRcaNodeId(a.nodeId); setRcaNodeName(a.node?.name); setShowRcaModal(true) }}
+                      className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 font-semibold transition-colors flex items-center gap-1">
+                      <FileText className="w-3 h-3" /> RCA
+                    </button>
                   </td>
                 )}
               </tr>
@@ -213,6 +224,13 @@ export default function Alarms() {
           </div>
         </div>
       )}
+      <RcaModal
+        alarmId={rcaAlarmId}
+        nodeId={rcaNodeId}
+        nodeName={rcaNodeName}
+        isOpen={showRcaModal}
+        onClose={() => setShowRcaModal(false)}
+      />
     </div>
   )
 }

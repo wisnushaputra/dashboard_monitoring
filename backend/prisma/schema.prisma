@@ -15,18 +15,23 @@ model User {
   role         String   @default("viewer") // admin, operator, viewer
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+  shiftLogs    ShiftLog[]
 
   @@map("users")
 }
 
 model Customer {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
-  code      String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  sites     Site[]
-  nodes     Node[]
+  id                   Int      @id @default(autoincrement())
+  name                 String   @unique
+  code                 String   @unique
+  slaTarget            Float    @default(99.5) @map("sla_target") // e.g. 99.9, 99.5, 99.0
+  monthlyFee           Float    @default(15000000) @map("monthly_fee") // Monthly contract fee in IDR
+  penaltyRatePerPercent Float   @default(5.0) @map("penalty_rate_per_percent") // % refund per 0.1% SLA breach
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  sites                Site[]
+  nodes                Node[]
+  slaBillingSnapshots  SlaBillingSnapshot[]
 
   @@map("customers")
 }
@@ -59,6 +64,7 @@ model Node {
   latencyMs         Float?   @map("latency_ms")
   minLatencyMs      Float?   @map("min_latency_ms")
   maxLatencyMs      Float?   @map("max_latency_ms")
+  jitterMs          Float?   @map("jitter_ms")
   packetLoss        Float?   @map("packet_loss")
   lastChecked       DateTime? @map("last_checked")
   enabled           Boolean  @default(true)
@@ -76,6 +82,9 @@ model Node {
   connectionsFrom   Connection[] @relation("from_node")
   connectionsTo     Connection[] @relation("to_node")
   maintenanceWindows MaintenanceWindow[]
+  deviceConfigs     DeviceConfig[]
+  anomalyLogs       AnomalyLog[]
+  rcaReports        RcaReport[]
   parentId          Int?     @map("parent_id")
   parent            Node?    @relation("ParentChild", fields: [parentId], references: [id], onDelete: Cascade)
   children          Node[]   @relation("ParentChild")
@@ -117,6 +126,7 @@ model Alarm {
   duration    Int?      // seconds
   cause       String?
   recoveryNote String?  @map("recovery_note")
+  rcaReports  RcaReport[]
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@map("alarms")
@@ -131,6 +141,7 @@ model EventLog {
   latencyMs Float?   @map("latency_ms")
   minLatencyMs Float? @map("min_latency_ms")
   maxLatencyMs Float? @map("max_latency_ms")
+  jitterMs     Float? @map("jitter_ms")
   packetLoss Float?   @map("packet_loss")
   timestamp DateTime @default(now())
 
@@ -147,6 +158,9 @@ model NotificationSetting {
   webhookUrl  String? @map("webhook_url")
   slackEnabled Boolean @default(false) @map("slack_enabled")
   slackWebhook String? @map("slack_webhook")
+  telegramEnabled Boolean @default(false) @map("telegram_enabled")
+  telegramBotToken String? @map("telegram_bot_token")
+  telegramChatId String? @map("telegram_chat_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -179,3 +193,99 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model DeviceConfig {
+  id           Int      @id @default(autoincrement())
+  nodeId       Int      @map("node_id")
+  node         Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  version      Int
+  content      String   @db.Text
+  hash         String
+  changesCount Int      @default(0) @map("changes_count")
+  status       String   @default("success") // success, failed
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("device_configs")
+}
+
+model AnomalyLog {
+  id           Int      @id @default(autoincrement())
+  nodeId       Int      @map("node_id")
+  node         Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  anomalyType  String   @map("anomaly_type") // latency_spike, slow_degradation, jitter_anomaly
+  severity     String   // warning, critical
+  zScore       Float    @map("z_score")
+  currentValue Float    @map("current_value")
+  baselineAvg  Float    @map("baseline_avg")
+  message      String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("anomaly_logs")
+}
+
+model RcaReport {
+  id                   Int       @id @default(autoincrement())
+  ticketId             String    @unique @map("ticket_id")
+  title                String
+  nodeId               Int       @map("node_id")
+  node                 Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  alarmId              Int?      @map("alarm_id")
+  alarm                Alarm?    @relation(fields: [alarmId], references: [id], onDelete: SetNull)
+  incidentStartTime    DateTime  @map("incident_start_time")
+  incidentEndTime      DateTime? @map("incident_end_time")
+  durationMinutes      Int       @default(0) @map("duration_minutes")
+  severity             String    @default("major") // critical, major, minor
+  rootCauseCategory    String    @map("root_cause_category") // fiber_cut, hardware_failure, power_outage, software_bug, human_error, third_party
+  rootCauseDescription String    @db.Text @map("root_cause_description")
+  executiveSummary     String    @db.Text @map("executive_summary")
+  chronologyJson       String    @db.Text @map("chronology_json") // JSON array of [{ timestamp, description }]
+  actionItemsJson      String    @db.Text @map("action_items_json") // JSON array of [{ action, owner, dueDate, status }]
+  authorName           String    @default("NOC Operations Team") @map("author_name")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  @@map("rca_reports")
+}
+
+model ShiftLog {
+  id                    Int       @id @default(autoincrement())
+  shiftName             String    @map("shift_name") // morning, afternoon, night
+  shiftDate             DateTime  @map("shift_date")
+  outgoingUserId        Int       @map("outgoing_user_id")
+  outgoingUser          User      @relation(fields: [outgoingUserId], references: [id], onDelete: Cascade)
+  incomingOperatorName  String    @map("incoming_operator_name")
+  openIncidentsCount    Int       @default(0) @map("open_incidents_count")
+  resolvedIncidentsCount Int      @default(0) @map("resolved_incidents_count")
+  maintenanceNotes      String?   @db.Text @map("maintenance_notes")
+  pendingActionItems    String?   @db.Text @map("pending_action_items")
+  handoverSummary       String    @db.Text @map("handover_summary")
+  status                String    @default("submitted") // submitted, acknowledged
+  acknowledgedBy        String?   @map("acknowledged_by")
+  acknowledgedAt        DateTime? @map("acknowledged_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@map("shift_logs")
+}
+
+model SlaBillingSnapshot {
+  id                     Int      @id @default(autoincrement())
+  monthYear              String   @map("month_year") // e.g. "2026-07"
+  customerId             Int      @map("customer_id")
+  customer               Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contractedSla          Float    @map("contracted_sla")
+  actualUptimePct        Float    @map("actual_uptime_pct")
+  totalDowntimeMinutes   Float    @map("total_downtime_minutes")
+  allowedDowntimeMinutes Float    @map("allowed_downtime_minutes")
+  excessDowntimeMinutes  Float    @map("excess_downtime_minutes")
+  monthlyFee             Float    @map("monthly_fee")
+  penaltyPct             Float    @map("penalty_pct")
+  penaltyAmountIdr       Float    @map("penalty_amount_idr")
+  netBillAmountIdr       Float    @map("net_bill_amount_idr")
+  status                 String   @default("calculated") // calculated, approved, invoiced
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@unique([customerId, monthYear])
+  @@map("sla_billing_snapshots")
+}

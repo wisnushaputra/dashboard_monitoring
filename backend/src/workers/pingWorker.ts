@@ -2,22 +2,39 @@ import prisma from '../lib/prisma'
 import { pingFast, ping } from '../lib/ping'
 import eventEmitter from '../lib/eventEmitter'
 import { sendNotifications } from '../lib/notifications'
+import { detectNodeAnomalies } from '../lib/anomalyDetector'
 
 const WARN_THRESHOLD_MS = 100
 const FAIL_THRESHOLD = 2
 const CHECK_INTERVAL_MS = 5000
+const FLAPPING_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
+const FLAPPING_THRESHOLD = 3 // 3 status transitions in 5 mins
+const STABLE_RECOVERY_CHECKS = 5 // 5 consecutive checks to clear flapping
 
 interface NodeState {
   consecutiveFailures: number
   consecutiveWarnings: number
   lastStatus: string | null
   alarmId: number | null
+  statusHistory: Array<{ status: string; timestamp: number }>
+  isFlapping: boolean
+  stableCheckCount: number
+  flappingAlarmId: number | null
 }
 
 const nodeStates = new Map<number, NodeState>()
 
 async function checkNode(node: { id: number; ipAddress: string; monitoringInterval: number; status: string; name: string; deviceType: string; customerId: number; isMaintenance: boolean; monitorConfig: any }) {
-  const state = nodeStates.get(node.id) || { consecutiveFailures: 0, consecutiveWarnings: 0, lastStatus: null, alarmId: null }
+  const state = nodeStates.get(node.id) || {
+    consecutiveFailures: 0,
+    consecutiveWarnings: 0,
+    lastStatus: null,
+    alarmId: null,
+    statusHistory: [],
+    isFlapping: false,
+    stableCheckCount: 0,
+    flappingAlarmId: null,
+  }
 
   if (node.monitoringInterval < CHECK_INTERVAL_MS / 1000) {
     return
@@ -65,46 +82,119 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
     }
   }
 
-  const changed = newStatus !== state.lastStatus
-
-  // Since we already do a 3-packet check on every cycle, we don't need a redundant detailed ping on status change.
+  const rawStatus = newStatus
+  const changed = rawStatus !== state.lastStatus
   const detail = result
+  const nowTs = Date.now()
 
   if (changed) {
+    state.statusHistory.push({ status: rawStatus, timestamp: nowTs })
+  }
+
+  // Filter history to last 5 minutes
+  state.statusHistory = state.statusHistory.filter(h => nowTs - h.timestamp <= FLAPPING_WINDOW_MS)
+
+  let effectiveStatus = rawStatus
+
+  // Check for Flapping state
+  if (state.statusHistory.length >= FLAPPING_THRESHOLD && !state.isFlapping && !isUnderMaintenance) {
+    state.isFlapping = true
+    state.stableCheckCount = 0
+    effectiveStatus = 'flapping'
+
+    // Create a Flapping Alarm
+    const alarm = await prisma.alarm.create({
+      data: {
+        nodeId: node.id,
+        status: 'active',
+        startTime: new Date(),
+        cause: `Flapping Link: Node status toggled ${state.statusHistory.length} times in 5 minutes (Jitter: ${detail.jitterMs?.toFixed(1) || 0}ms)`
+      }
+    })
+    state.flappingAlarmId = alarm.id
+    eventEmitter.emit('alarm:created', alarm)
+
+    sendNotifications({
+      nodeName: node.name,
+      nodeIp: node.ipAddress,
+      status: 'warning',
+      deviceType: node.deviceType,
+    }).catch(() => {})
+  } else if (state.isFlapping) {
+    if (!changed) {
+      state.stableCheckCount++
+    } else {
+      state.stableCheckCount = 0
+    }
+
+    if (state.stableCheckCount >= STABLE_RECOVERY_CHECKS) {
+      // Link stabilized!
+      state.isFlapping = false
+      effectiveStatus = rawStatus
+
+      if (state.flappingAlarmId) {
+        const alarmRecord = await prisma.alarm.findUnique({ where: { id: state.flappingAlarmId } })
+        const endTime = new Date()
+        let duration: number | undefined
+        if (alarmRecord) {
+          duration = Math.floor((endTime.getTime() - alarmRecord.startTime.getTime()) / 1000)
+        }
+        const resolvedAlarm = await prisma.alarm.update({
+          where: { id: state.flappingAlarmId },
+          data: {
+            status: 'resolved',
+            endTime,
+            duration,
+            recoveryNote: `Link stabilized after flapping (status: ${rawStatus.toUpperCase()})`
+          }
+        })
+        eventEmitter.emit('alarm:resolved', resolvedAlarm)
+        state.flappingAlarmId = null
+      }
+    } else {
+      effectiveStatus = 'flapping'
+    }
+  }
+
+  if (changed || effectiveStatus !== node.status) {
     const prevStatus = state.lastStatus
-    state.lastStatus = newStatus
+    state.lastStatus = rawStatus
 
     await prisma.node.update({
       where: { id: node.id },
       data: {
-        status: newStatus,
+        status: effectiveStatus,
         latencyMs: detail.avgLatency,
         minLatencyMs: detail.minLatency,
         maxLatencyMs: detail.maxLatency,
+        jitterMs: detail.jitterMs,
         packetLoss: detail.packetLoss,
         lastChecked: new Date(),
       },
     })
 
     const msg = isUnderMaintenance
-      ? `Entered maintenance mode (scheduled or manual)`
-      : newStatus === 'up'
-        ? `Recovered (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
-        : `${newStatus} (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
+      ? `Entered maintenance mode`
+      : effectiveStatus === 'flapping'
+        ? `Flapping link detected (${state.statusHistory.length} toggles in 5m, jitter: ${detail.jitterMs?.toFixed(1) || 0}ms)`
+        : rawStatus === 'up'
+          ? `Recovered (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, jitter:${detail.jitterMs?.toFixed(1) || 0}ms, loss:${detail.packetLoss}%)`
+          : `${rawStatus} (avg:${detail.avgLatency?.toFixed(0) || '?'}ms, loss:${detail.packetLoss}%)`
 
     await prisma.eventLog.create({
       data: {
         nodeId: node.id,
-        eventType: newStatus,
+        eventType: effectiveStatus,
         message: msg,
         latencyMs: detail.avgLatency,
         minLatencyMs: detail.minLatency,
         maxLatencyMs: detail.maxLatency,
+        jitterMs: detail.jitterMs,
         packetLoss: detail.packetLoss,
       },
     })
 
-    if (newStatus === 'down') {
+    if (rawStatus === 'down' && !state.isFlapping) {
       const parentDownCheck = await isParentDown(node.id)
       let causeText = undefined
       let shouldAlert = true
@@ -114,27 +204,29 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
         shouldAlert = false
       }
 
-      const alarm = await prisma.alarm.create({
-        data: { 
-          nodeId: node.id, 
-          status: 'active', 
-          startTime: new Date(),
-          cause: causeText
-        },
-      })
-      state.alarmId = alarm.id
-      eventEmitter.emit('alarm:created', alarm)
+      if (!state.alarmId) {
+        const alarm = await prisma.alarm.create({
+          data: { 
+            nodeId: node.id, 
+            status: 'active', 
+            startTime: new Date(),
+            cause: causeText
+          },
+        })
+        state.alarmId = alarm.id
+        eventEmitter.emit('alarm:created', alarm)
+      }
 
       if (shouldAlert) {
         sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'down', deviceType: node.deviceType }).catch(() => {})
       }
     }
 
-    if (newStatus === 'warning') {
+    if (rawStatus === 'warning' && !state.isFlapping) {
       sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'warning', deviceType: node.deviceType }).catch(() => {})
     }
 
-    if ((newStatus === 'up' || newStatus === 'maintenance') && state.alarmId) {
+    if ((rawStatus === 'up' || isUnderMaintenance) && state.alarmId && !state.isFlapping) {
       const alarmRecord = await prisma.alarm.findUnique({ where: { id: state.alarmId } })
       const endTime = new Date()
       let duration: number | undefined
@@ -148,21 +240,22 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
           status: 'resolved',
           endTime,
           duration,
-          recoveryNote: newStatus === 'maintenance' ? 'Entered maintenance mode' : undefined,
+          recoveryNote: isUnderMaintenance ? 'Entered maintenance mode' : undefined,
         },
       })
       eventEmitter.emit('alarm:resolved', alarm)
       state.alarmId = null
     }
 
-    if (newStatus === 'up' && (prevStatus === 'down' || prevStatus === 'warning')) {
+    if (rawStatus === 'up' && (prevStatus === 'down' || prevStatus === 'warning') && !state.isFlapping) {
       sendNotifications({ nodeName: node.name, nodeIp: node.ipAddress, status: 'up', deviceType: node.deviceType }).catch(() => {})
     }
 
     eventEmitter.emit('node:status', {
       nodeId: node.id,
-      status: newStatus,
+      status: effectiveStatus,
       latencyMs: detail.avgLatency,
+      jitterMs: detail.jitterMs,
       packetLoss: detail.packetLoss,
       lastChecked: new Date(),
     })
@@ -178,10 +271,34 @@ async function checkNode(node: { id: number; ipAddress: string; monitoringInterv
         latencyMs: detail.avgLatency,
         minLatencyMs: detail.minLatency,
         maxLatencyMs: detail.maxLatency,
+        jitterMs: detail.jitterMs,
         packetLoss: detail.packetLoss,
         lastChecked: new Date(),
       },
     })
+  }
+
+  // AI Anomaly & Slow Degradation Detection
+  if (!isUnderMaintenance && detail.alive) {
+    const anomaly = detectNodeAnomalies(node.id, detail.avgLatency, detail.jitterMs)
+    if (anomaly.isAnomaly) {
+      await prisma.anomalyLog.create({
+        data: {
+          nodeId: node.id,
+          anomalyType: anomaly.type || 'latency_spike',
+          severity: anomaly.severity || 'warning',
+          zScore: anomaly.zScore,
+          currentValue: anomaly.currentValue,
+          baselineAvg: anomaly.baselineAvg,
+          message: anomaly.message || `AI Anomaly detected (Z-Score: ${anomaly.zScore})`,
+        }
+      })
+      eventEmitter.emit('node:anomaly', {
+        nodeId: node.id,
+        nodeName: node.name,
+        ...anomaly,
+      })
+    }
   }
 
   nodeStates.set(node.id, state)

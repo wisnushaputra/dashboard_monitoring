@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import socket from '../lib/socket'
-import { Activity, Wifi, WifiOff, AlertTriangle, ShieldAlert, Cpu, Users } from 'lucide-react'
+import { Activity, Wifi, WifiOff, AlertTriangle, ShieldAlert, Cpu, Users, Brain, TrendingUp, Sparkles } from 'lucide-react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts'
 
 interface Summary {
@@ -19,14 +19,28 @@ interface Summary {
 export default function Dashboard() {
   const [summary, setSummary] = useState<Summary | null>(null)
 
+  const [anomalies, setAnomalies] = useState<any[]>([])
+
   const load = () => api.events.summary().then(setSummary).catch(() => {})
-  useEffect(() => { load(); const id = setInterval(load, 30000); return () => clearInterval(id) }, [])
+  const loadAnomalies = () => (api as any).anomalies.list(6).then(setAnomalies).catch(() => {})
+
+  useEffect(() => {
+    load()
+    loadAnomalies()
+    const id = setInterval(() => { load(); loadAnomalies() }, 30000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     const handler = () => load()
     socket.on('node:status', handler)
     socket.on('alarm:created', handler)
-    return () => { socket.off('node:status', handler); socket.off('alarm:created', handler) }
+    socket.on('node:anomaly', () => { load(); loadAnomalies() })
+    return () => {
+      socket.off('node:status', handler)
+      socket.off('alarm:created', handler)
+      socket.off('node:anomaly')
+    }
   }, [])
 
   const cards = [
@@ -131,6 +145,10 @@ export default function Dashboard() {
               <span>High (&gt;150ms) / Down</span>
             </div>
             <div className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded bg-fuchsia-500 border border-fuchsia-600 block animate-pulse" />
+              <span>Flapping</span>
+            </div>
+            <div className="flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded bg-purple-500 border border-purple-600 block" />
               <span>Maint</span>
             </div>
@@ -146,7 +164,10 @@ export default function Dashboard() {
             let bgColor = 'bg-zinc-100 dark:bg-zinc-700/50 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
             let valText = '-'
 
-            if (node.status === 'down') {
+            if (node.status === 'flapping') {
+              bgColor = 'bg-fuchsia-600 text-white border-fuchsia-700 shadow-fuchsia-200 dark:shadow-none animate-pulse'
+              valText = 'FLAP'
+            } else if (node.status === 'down') {
               bgColor = 'bg-red-500 text-white border-red-600 shadow-red-200 dark:shadow-none'
               valText = 'DOWN'
             } else if (node.status === 'maintenance') {
@@ -179,17 +200,29 @@ export default function Dashboard() {
                 </span>
                 <span className="font-semibold text-[8px] tracking-tight">{valText}</span>
 
-                {/* Rich Tooltip */}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-zinc-900 dark:bg-zinc-950 text-white text-[10px] rounded-lg p-2.5 shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-200 z-50 space-y-1 text-left border border-zinc-700 dark:border-zinc-800">
-                  <div className="font-bold border-b border-zinc-700 dark:border-zinc-800 pb-1 mb-1 truncate">{node.name}</div>
-                  <div>IP Address: <span className="font-mono text-zinc-300">{node.ipAddress}</span></div>
-                  <div>Device Type: <span className="capitalize text-zinc-300">{node.deviceType}</span></div>
-                  <div>Status: <span className="uppercase text-zinc-300">{node.status}</span></div>
-                  <div>Latency: <span className="text-zinc-300">{node.latencyMs ? `${Math.round(node.latencyMs)}ms` : '-'}</span></div>
-                  <div>Loss: <span className="text-zinc-300">{node.packetLoss ?? 0}%</span></div>
-                  
-                  {/* Arrow indicator */}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-zinc-900 dark:border-t-zinc-950" />
+                {/* Tooltip Card on Hover */}
+                <div className="absolute bottom-full mb-2 hidden group-hover:block z-50 w-48 p-2.5 bg-zinc-900 text-white text-[10px] rounded-lg shadow-xl border border-zinc-700 pointer-events-none animate-toast">
+                  <div className="font-bold text-xs truncate border-b border-zinc-800 pb-1 mb-1">{node.name}</div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">IP:</span>
+                    <span className="font-mono">{node.ipAddress}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Status:</span>
+                    <span className="uppercase font-bold">{node.status}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Latency:</span>
+                    <span>{node.latencyMs !== null ? `${Math.round(node.latencyMs)} ms` : '-'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Jitter:</span>
+                    <span>{node.jitterMs !== null && node.jitterMs !== undefined ? `${node.jitterMs.toFixed(1)} ms` : '0 ms'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Packet Loss:</span>
+                    <span>{node.packetLoss !== null ? `${node.packetLoss}%` : '-'}</span>
+                  </div>
                 </div>
               </div>
             )
@@ -238,6 +271,55 @@ export default function Dashboard() {
             {(!summary?.customerSla || summary.customerSla.length === 0) && (
               <div className="text-center text-xs py-8 text-zinc-400">
                 No customers registered
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* AI Anomaly & Slow Degradation Alert Widget */}
+        <div className="bg-gradient-to-br from-purple-900/10 via-white to-indigo-900/10 dark:from-purple-950/30 dark:via-zinc-800 dark:to-indigo-950/30 rounded-xl border border-purple-200 dark:border-purple-900/40 shadow-sm flex flex-col">
+          <div className="px-4 py-3 border-b border-purple-100 dark:border-purple-900/40 font-semibold text-sm flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-purple-900 dark:text-purple-200 font-bold">
+              <Brain className="w-4 h-4 text-purple-500 animate-pulse" />
+              AI Anomaly & Slow Degradation Monitor
+            </span>
+            <span className="text-[10px] bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Sparkles className="w-3 h-3" /> Real-time Z-Score Engine
+            </span>
+          </div>
+          <div className="flex-1 overflow-y-auto max-h-[460px] p-3 space-y-2.5">
+            {anomalies.map((anom: any) => (
+              <div
+                key={anom.id}
+                className="p-3 bg-white/80 dark:bg-zinc-900/80 rounded-xl border border-purple-100 dark:border-purple-900/30 shadow-sm space-y-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-zinc-800 dark:text-zinc-200 flex items-center gap-1">
+                    <TrendingUp className="w-3.5 h-3.5 text-purple-500" />
+                    {anom.node?.name || `Node #${anom.nodeId}`}
+                  </span>
+                  <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
+                    anom.severity === 'critical'
+                      ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-300 border border-red-300'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-300'
+                  }`}>
+                    Z-SCORE {anom.zScore?.toFixed(1)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug font-medium">
+                  {anom.message}
+                </p>
+                <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono pt-1 border-t dark:border-zinc-800">
+                  <span>Current: {anom.currentValue}ms (Base: {anom.baselineAvg}ms)</span>
+                  <span>{new Date(anom.createdAt).toLocaleTimeString()}</span>
+                </div>
+              </div>
+            ))}
+            {anomalies.length === 0 && (
+              <div className="text-center py-10 text-xs text-zinc-400 space-y-1">
+                <Brain className="w-7 h-7 mx-auto text-purple-300 dark:text-purple-800 opacity-60" />
+                <div className="font-semibold text-zinc-500 dark:text-zinc-400">All Nodes Operating Within Normal Baseline</div>
+                <div className="text-[10px] text-zinc-400">AI Z-Score engine is continuously analyzing latency patterns</div>
               </div>
             )}
           </div>

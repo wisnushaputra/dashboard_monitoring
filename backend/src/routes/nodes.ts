@@ -378,6 +378,10 @@ router.delete('/maintenance-windows/:windowId', roleMiddleware('admin'), async (
 
 router.get('/:id', async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
+  if (isNaN(id)) {
+    res.status(400).json({ error: 'Invalid Node ID' })
+    return
+  }
   const node = await prisma.node.findUnique({
     where: { id },
     include: { customer: true, site: true, alarms: true, eventLogs: { take: 20, orderBy: { timestamp: 'desc' } } },
@@ -444,6 +448,75 @@ router.put('/positions', roleMiddleware('admin'), async (req: Request, res: Resp
   }
 })
 
+router.put('/:id/toggle-freeze', roleMiddleware('admin', 'operator'), async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  const { enabled } = req.body
+
+  if (enabled === undefined) {
+    res.status(400).json({ error: 'enabled state required' })
+    return
+  }
+
+  try {
+    const existingNode = await prisma.node.findUnique({ where: { id } })
+    if (!existingNode) {
+      res.status(404).json({ error: 'Node not found' })
+      return
+    }
+
+    const newStatus = enabled ? 'unknown' : 'disabled'
+
+    // If disabling (freezing), resolve active alarms for this node
+    if (!enabled) {
+      const activeAlarm = await prisma.alarm.findFirst({
+        where: { nodeId: id, status: 'active' }
+      })
+      if (activeAlarm) {
+        const endTime = new Date()
+        const duration = Math.floor((endTime.getTime() - activeAlarm.startTime.getTime()) / 1000)
+        const resolvedAlarm = await prisma.alarm.update({
+          where: { id: activeAlarm.id },
+          data: {
+            status: 'resolved',
+            endTime,
+            duration,
+            recoveryNote: 'Node frozen / disabled temporarily by operator',
+          }
+        })
+        eventEmitter.emit('alarm:resolved', resolvedAlarm)
+      }
+    }
+
+    const node = await prisma.node.update({
+      where: { id },
+      data: {
+        enabled,
+        status: newStatus,
+      }
+    })
+
+    eventEmitter.emit('node:status', {
+      nodeId: id,
+      status: newStatus,
+      enabled,
+      lastChecked: new Date(),
+    })
+
+    logAudit({
+      userId: req.user?.userId,
+      username: req.user?.username || 'System',
+      action: enabled ? 'NODE_UNFREEZE' : 'NODE_FREEZE',
+      target: node.name,
+      details: enabled ? 'Node unfrozen / monitoring reactivated' : 'Node frozen / monitoring temporarily disabled',
+      ipAddress: req.ip
+    }).catch(console.error)
+
+    res.json(node)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.put('/:id', roleMiddleware('admin'), async (req: Request, res: Response) => {
   const id = parseInt(req.params.id)
   const { name, ipAddress, deviceType, location, description, monitoringInterval, monitorType, monitorConfig, customerId, siteId, x, y, enabled, parentId } = req.body
@@ -461,10 +534,22 @@ router.put('/:id', roleMiddleware('admin'), async (req: Request, res: Response) 
   if (siteId !== undefined) data.siteId = siteId
   if (x !== undefined) data.x = x
   if (y !== undefined) data.y = y
-  if (enabled !== undefined) data.enabled = enabled
+  if (enabled !== undefined) {
+    data.enabled = enabled
+    if (!enabled) data.status = 'disabled'
+  }
   if (parentId !== undefined) data.parentId = parentId ? parseInt(parentId) : null
 
   const node = await prisma.node.update({ where: { id }, data })
+
+  if (enabled !== undefined) {
+    eventEmitter.emit('node:status', {
+      nodeId: id,
+      status: node.status,
+      enabled: node.enabled,
+      lastChecked: new Date(),
+    })
+  }
 
   logAudit({
     userId: req.user?.userId,

@@ -18,6 +18,25 @@ function formatDowntime(seconds: number): string {
   return `${h > 0 ? `${h}h ` : ''}${m}m`
 }
 
+function getSafeSheetName(rawName: string, suffix: string, existingNames: Set<string>): string {
+  // Replace characters invalid in Excel sheet names: \ / ? * : [ ]
+  const sanitized = rawName.replace(/[\*\?:\\\/\[\]]/g, '-').trim()
+  
+  // Excel sheet name max length is 31 characters
+  const maxRawLen = 31 - suffix.length - 4
+  let baseName = sanitized.slice(0, Math.max(1, maxRawLen)).trim() || 'Node'
+  
+  let candidate = `${baseName}${suffix}`.slice(0, 31)
+  let counter = 1
+  while (existingNames.has(candidate)) {
+    candidate = `${baseName} (${counter})${suffix}`.slice(0, 31)
+    counter++
+  }
+  
+  existingNames.add(candidate)
+  return candidate
+}
+
 async function computeSlaStats(customerId: number, startDateStr: string, endDateStr: string) {
   const start = new Date(startDateStr)
   start.setUTCHours(0, 0, 0, 0)
@@ -550,9 +569,10 @@ router.get('/sla/xlsx', authMiddleware, async (req: Request, res: Response) => {
     })
 
     // WORKSHEETS 2+: One Worksheet Per Node for Detailed SLA Outage log!
+    const existingSheetNames = new Set<string>(['SLA Overview'])
     stats.nodesStats.forEach((node) => {
-      // Clean sheet name (Excel sheets cannot exceed 31 chars)
-      const sheetName = `${node.name.slice(0, 20)} SLA`
+      // Clean sheet name (Excel sheets cannot exceed 31 chars and cannot contain * ? : \ / [ ])
+      const sheetName = getSafeSheetName(node.name, ' SLA', existingSheetNames)
       const wsNode = wb.addWorksheet(sheetName)
 
       // Title Card
